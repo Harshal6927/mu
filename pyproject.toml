@@ -1,0 +1,32 @@
+[project]
+name = "mu"
+authors = [{ name = "Harshal Laheri", email = "harshal@harshallaheri.me" }]
+version = "0.1.0"
+description = "Play audio through your microphone in games using hotkeys"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "sounddevice>=0.4.6",
+    "soundfile>=0.12.1",
+    "numpy>=1.24.0",
+    "pynput>=1.7.6",
+    "rich-click>=1.9.4",
+]
+
+[project.optional-dependencies]
+yt-dlp = ["yt-dlp>=2025.11.12"]
+
+[dependency-groups]
+dev = [
+    "yt-dlp>=2025.11.12",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[project.scripts]
+mu = "src.cli:main"
