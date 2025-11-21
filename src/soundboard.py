@@ -1,6 +1,7 @@
 # Copyright (c) 2025. All rights reserved.
 """Soundboard with hotkey bindings for playing audio files."""
 
+import random
 from pathlib import Path
 
 from pynput import keyboard
@@ -140,11 +141,12 @@ class Soundboard:
             self.listener.stop()
             self.listener = None
 
-    def play_sound(self, sound_name: str) -> bool:
+    def play_sound(self, sound_name: str, *, blocking: bool = False) -> bool:
         """Manually play a sound by name.
 
         Args:
             sound_name: Name of the sound to play
+            blocking: If True, wait for playback to finish
 
         Returns:
             True if playback started successfully
@@ -152,9 +154,44 @@ class Soundboard:
         """
         audio_file = self.sounds.get(sound_name)
         if audio_file:
-            return self.audio_manager.play_audio(audio_file)
+            return self.audio_manager.play_audio(audio_file, blocking=blocking)
         self.console.print(f"[red]✗[/red] Sound '{sound_name}' not found.")
         return False
+
+    def play_all_sounds(self, *, shuffle: bool = True) -> None:
+        """Play all sounds in random or sequential order.
+
+        Args:
+            shuffle: If True, play sounds in random order. Default is True.
+
+        Raises:
+            KeyboardInterrupt: When user presses Ctrl+C to stop playback.
+
+        """
+        if not self.sounds:
+            self.console.print("[yellow]⚠[/yellow] No sounds to play.")
+            return
+
+        sound_names = list(self.sounds.keys())
+        if shuffle:
+            random.shuffle(sound_names)
+        else:
+            sound_names = sorted(sound_names)
+
+        total = len(sound_names)
+        mode = "randomly" if shuffle else "sequentially"
+
+        self.console.print(f"\n[bold cyan]Playing {total} sounds {mode}...[/bold cyan]")
+        self.console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+
+        try:
+            for idx, sound_name in enumerate(sound_names, 1):
+                self.console.print(f"[cyan][{idx}/{total}][/cyan] ", end="")
+                self.play_sound(sound_name, blocking=True)
+        except KeyboardInterrupt:
+            self.console.print("\n[yellow]⏸[/yellow] Playback interrupted.")
+            self.stop_sound()
+            raise
 
     def list_sounds(self) -> None:
         """Print all available sounds in a formatted table."""

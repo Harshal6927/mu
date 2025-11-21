@@ -1,6 +1,7 @@
 # Copyright (c) 2025. All rights reserved.
 """CLI interface using rich-click for beautiful output."""
 
+import contextlib
 import sys
 
 import rich_click as click
@@ -225,6 +226,25 @@ def volume(level: float | None) -> None:
         console.print("[green]✓[/green] Volume saved!")
 
 
+@cli.command()
+@click.option("--sequential", is_flag=True, help="Play sounds in alphabetical order instead of random.")
+def auto(sequential: bool) -> None:  # noqa: FBT001
+    """Play all sounds randomly, one after another.
+
+    Each sound will play completely before the next one starts.
+    Press Ctrl+C to stop playback.
+    """
+    soundboard, _ = get_soundboard()
+
+    if not soundboard.sounds:
+        console.print("[red]✗[/red] No sounds found.")
+        console.print(f"[dim]Add audio files to: {soundboard.sounds_dir}[/dim]")
+        sys.exit(1)
+
+    with contextlib.suppress(KeyboardInterrupt):
+        soundboard.play_all_sounds(shuffle=not sequential)
+
+
 def _handle_play_sound(soundboard: Soundboard) -> None:
     """Handle playing a sound by name."""
     sound_name = click.prompt("Enter sound name")
@@ -284,11 +304,18 @@ def _show_menu() -> None:
     console.print("6. List audio devices")
     console.print("7. Change output device")
     console.print("8. Adjust volume")
+    console.print("9. Auto-play all sounds")
     console.print("0. Exit")
 
 
+def _handle_auto_play(soundboard: Soundboard) -> None:
+    """Handle auto-play all sounds."""
+    with contextlib.suppress(KeyboardInterrupt):
+        soundboard.play_all_sounds()
+
+
 @cli.command()
-def interactive() -> None:  # noqa: C901
+def interactive() -> None:
     """Launch interactive menu mode.
 
     Provides a text-based menu for exploring and using the soundboard.
@@ -302,29 +329,30 @@ def interactive() -> None:  # noqa: C901
 
     soundboard.setup_default_hotkeys()
 
+    # Menu action dispatch table (lambdas needed for partial application)
+    menu_actions = {
+        "1": soundboard.list_sounds,
+        "2": lambda: _handle_play_sound(soundboard),
+        "3": soundboard.list_hotkeys,
+        "4": lambda: _handle_hotkey_listener(soundboard),
+        "5": soundboard.stop_sound,
+        "6": audio_manager.print_devices,
+        "7": lambda: _handle_change_device(audio_manager),
+        "8": lambda: _handle_volume(audio_manager),
+        "9": lambda: _handle_auto_play(soundboard),
+    }
+
     while True:
         _show_menu()
         choice = click.prompt("\nEnter your choice", type=str).strip()
 
-        if choice == "1":
-            soundboard.list_sounds()
-        elif choice == "2":
-            _handle_play_sound(soundboard)
-        elif choice == "3":
-            soundboard.list_hotkeys()
-        elif choice == "4":
-            _handle_hotkey_listener(soundboard)
-        elif choice == "5":
-            soundboard.stop_sound()
-        elif choice == "6":
-            audio_manager.print_devices()
-        elif choice == "7":
-            _handle_change_device(audio_manager)
-        elif choice == "8":
-            _handle_volume(audio_manager)
-        elif choice == "0":
+        if choice == "0":
             console.print("\n[cyan]Goodbye! 👋[/cyan]")
             break
+
+        action = menu_actions.get(choice)
+        if action:
+            action()
         else:
             console.print("[red]Invalid choice.[/red]")
 

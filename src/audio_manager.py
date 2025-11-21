@@ -1,6 +1,7 @@
 # Copyright (c) 2025. All rights reserved.
 """Audio device management and playback functionality."""
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -167,7 +168,9 @@ class AudioManager:
             sd.play(data, samplerate, device=self.output_device_id)
 
             if blocking:
-                sd.wait()
+                # Use polling loop instead of sd.wait() to allow KeyboardInterrupt
+                while sd.get_stream() and sd.get_stream().active:
+                    time.sleep(0.1)
         except (OSError, RuntimeError) as e:
             self.console.print(f"[red]Error:[/red] {e}")
             return False
