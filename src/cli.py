@@ -46,7 +46,7 @@ def get_soundboard() -> tuple[Soundboard, AudioManager]:
 
 @click.group(invoke_without_command=True)
 @click.pass_context
-@click.version_option(version="0.1.0", prog_name="muc")
+@click.version_option(version="0.2.0", prog_name="muc")
 def cli(ctx: click.Context) -> None:
     """[bold cyan]MUC Soundboard[/bold cyan].
 

@@ -1,7 +1,7 @@
 [project]
 name = "muc"
 authors = [{ name = "Harshal Laheri", email = "harshal@harshallaheri.me" }]
-version = "0.1.0"
+version = "0.2.0"
 description = "Play audio through your microphone in games using hotkeys"
 readme = "README.md"
 requires-python = ">=3.13"
