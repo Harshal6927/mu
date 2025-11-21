@@ -10,6 +10,8 @@ Play audio files through your microphone in multiplayer games like CS, Battlefie
 - 🎛️ **Multiple formats** - Supports WAV, MP3, OGG, FLAC, M4A
 - 🔊 **Auto-detection** - Finds VB-Cable and virtual audio devices automatically
 - 📁 **Organized library** - Subdirectory support for sound organization
+- 🔉 **Volume control** - Adjustable playback volume with persistent settings
+- 🎲 **Auto-play mode** - Play all sounds randomly or sequentially
 - ⚙️ **Persistent config** - Saves your settings to `~/.muc/config.json`
 - 🎮 **Gaming ready** - Perfect for CS, Battlefield, COD, and more!
 
@@ -97,6 +99,11 @@ muc devices        # List all audio devices
 muc sounds         # List available sounds in your library
 muc play [name]    # Play a specific sound (prompts if no name)
 muc stop           # Stop currently playing sound
+muc auto           # Play all sounds randomly (use --sequential for alphabetical order)
+
+# Volume control
+muc volume         # Show current volume
+muc volume 0.5     # Set volume to 50% (0.0 to 1.0)
 
 # Hotkey control
 muc hotkeys        # Show hotkey bindings (F1-F10)
@@ -161,6 +168,8 @@ Menu options:
 5. Stop current sound
 6. List audio devices
 7. Change output device
+8. Adjust volume
+9. Auto-play all sounds
 0. Exit
 
 ## 🎵 Audio File Management
@@ -215,7 +224,8 @@ Configuration is automatically saved to `~/.muc/config.json`:
 ```json
 {
   "output_device_id": 6,
-  "sounds_dir": "C:/path/to/muc/sounds"
+  "sounds_dir": "C:/path/to/muc/sounds",
+  "volume": 1.0
 }
 ```
 
@@ -232,7 +242,7 @@ muc setup
    ```
 
 2. **Volume Control**:
-   - Adjust Windows master volume
+   - Use `muc volume 0.5` to set soundboard volume to 50%
    - Use audio editing software to normalize clips
    - Set in-game voice volume appropriately
 
