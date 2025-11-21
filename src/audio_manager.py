@@ -117,6 +117,35 @@ class AudioManager:
         percentage = int(self.volume * 100)
         self.console.print(f"[cyan]♪[/cyan] Volume set to {percentage}%")
 
+    @staticmethod
+    def _adjust_channels(data: np.ndarray, max_channels: int) -> np.ndarray:
+        """Adjust audio channels to match the output device.
+
+        Args:
+            data: Audio data array
+            max_channels: Target number of channels
+
+        Returns:
+            Adjusted audio data array
+
+        """
+        if data.shape[1] < max_channels:
+            # Duplicate channels to fill as much as possible
+            tile_count = max_channels // data.shape[1]
+            data = np.tile(data, (1, tile_count))
+
+            # If we still don't have enough channels (e.g. 2 -> 5), pad with silence
+            current_channels = data.shape[1]
+            if current_channels < max_channels:
+                padding = np.zeros((data.shape[0], max_channels - current_channels))
+                data = np.hstack((data, padding))
+
+        elif data.shape[1] > max_channels:
+            # Take only the channels we need
+            data = data[:, :max_channels]
+
+        return data
+
     def play_audio(self, audio_file: Path, *, blocking: bool = False) -> bool:
         """Play an audio file through the selected output device.
 
@@ -155,12 +184,7 @@ class AudioManager:
             max_channels = device_info["max_output_channels"]  # pyright: ignore[reportCallIssue, reportArgumentType]
 
             # Adjust channels if needed
-            if data.shape[1] < max_channels:
-                # Duplicate channels if we have fewer than device supports
-                data = np.tile(data, (1, max_channels // data.shape[1]))
-            elif data.shape[1] > max_channels:
-                # Take only the channels we need
-                data = data[:, :max_channels]
+            data = self._adjust_channels(data, max_channels)
 
             # Apply volume scaling
             data *= self.volume
