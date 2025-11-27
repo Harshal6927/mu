@@ -1,4 +1,5 @@
 # Copyright (c) 2025. All rights reserved.
+# ruff: noqa: ARG002
 """Unit tests for AudioManager class."""
 
 from pathlib import Path
@@ -72,7 +73,12 @@ class TestAudioManagerDevices:
 class TestAudioManagerSetOutputDevice:
     """Tests for set_output_device method."""
 
-    def test_set_output_device_valid(self, console: Console, mock_sounddevice: MagicMock) -> None:
+    def test_set_output_device_valid(
+        self,
+        console: Console,
+        mock_sounddevice: MagicMock,
+        mock_device_validation: MagicMock,
+    ) -> None:
         """Should set valid output device successfully."""
         with patch("src.audio_manager.sd", mock_sounddevice):
             manager = AudioManager(console)
@@ -81,7 +87,12 @@ class TestAudioManagerSetOutputDevice:
             assert result is True
             assert manager.output_device_id == 0
 
-    def test_set_output_device_no_output_channels(self, console: Console, mock_sounddevice: MagicMock) -> None:
+    def test_set_output_device_no_output_channels(
+        self,
+        console: Console,
+        mock_sounddevice: MagicMock,
+        mock_device_validation: MagicMock,
+    ) -> None:
         """Should reject device with no output channels."""
         with patch("src.audio_manager.sd", mock_sounddevice):
             manager = AudioManager(console)
@@ -91,7 +102,12 @@ class TestAudioManagerSetOutputDevice:
             assert result is False
             assert manager.output_device_id is None
 
-    def test_set_output_device_invalid_id(self, console: Console, mock_sounddevice: MagicMock) -> None:
+    def test_set_output_device_invalid_id(
+        self,
+        console: Console,
+        mock_sounddevice: MagicMock,
+        mock_device_validation: MagicMock,
+    ) -> None:
         """Should reject invalid device ID."""
         with patch("src.audio_manager.sd", mock_sounddevice):
             manager = AudioManager(console)
@@ -100,7 +116,12 @@ class TestAudioManagerSetOutputDevice:
             assert result is False
             assert manager.output_device_id is None
 
-    def test_set_output_device_negative_id(self, console: Console, mock_sounddevice: MagicMock) -> None:
+    def test_set_output_device_negative_id(
+        self,
+        console: Console,
+        mock_sounddevice: MagicMock,
+        mock_device_validation: MagicMock,
+    ) -> None:
         """Should reject negative device ID."""
         with patch("src.audio_manager.sd", mock_sounddevice):
             manager = AudioManager(console)
@@ -237,12 +258,13 @@ class TestAudioManagerPlayback:
         console: Console,
         mock_sounddevice: MagicMock,
         mock_soundfile: MagicMock,
+        mock_device_validation: MagicMock,
         temp_sounds_dir: Path,
     ) -> None:
         """Should play audio file successfully."""
         with patch("src.audio_manager.sd", mock_sounddevice), patch("src.audio_manager.sf", mock_soundfile):
             manager = AudioManager(console)
-            manager.output_device_id = 0
+            manager.set_output_device(0)  # Use the validation-enabled method
             audio_file = temp_sounds_dir / "sound1.wav"
 
             result = manager.play_audio(audio_file)
@@ -255,6 +277,7 @@ class TestAudioManagerPlayback:
         console: Console,
         mock_sounddevice: MagicMock,
         mock_soundfile: MagicMock,
+        mock_device_validation: MagicMock,
         temp_sounds_dir: Path,
     ) -> None:
         """Should apply volume scaling to audio data."""
@@ -264,7 +287,7 @@ class TestAudioManagerPlayback:
             mock_soundfile.read.return_value = (original_data.copy(), 44100)
 
             manager = AudioManager(console)
-            manager.output_device_id = 0
+            manager.set_output_device(0)  # Use the validation-enabled method
             manager.volume = 0.5
             audio_file = temp_sounds_dir / "sound1.wav"
 

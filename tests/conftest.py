@@ -12,6 +12,17 @@ import numpy as np
 import pytest
 from rich.console import Console
 
+from src.exceptions import DeviceNoOutputError, DeviceNotFoundError
+from src.logging_config import reset_logging
+from src.validators import AudioFileInfo, DeviceInfo
+
+
+@pytest.fixture(autouse=True)
+def reset_loguru() -> Generator[None]:
+    """Reset loguru logging between tests to avoid handler conflicts."""
+    yield
+    reset_logging()
+
 
 @pytest.fixture
 def console() -> Console:
@@ -58,6 +69,64 @@ def temp_sounds_dir(temp_dir: Path) -> Path:
     (sounds_dir / "subdir" / "sound4.flac").touch()
 
     return sounds_dir
+
+
+@pytest.fixture
+def mock_audio_validation() -> Generator[None]:
+    """Mock audio file validation to allow dummy files in tests."""
+
+    def mock_validate(file_path: Path) -> AudioFileInfo:
+        """Return mock validation info for any supported audio file."""
+        return AudioFileInfo(
+            path=file_path,
+            duration=1.0,
+            sample_rate=44100,
+            channels=2,
+            format="WAV",
+            is_valid=True,
+            error=None,
+        )
+
+    with patch("src.soundboard.validate_audio_file_safe", side_effect=mock_validate):
+        yield
+
+
+@pytest.fixture
+def mock_device_validation(mock_device_list: list[dict[str, int | str]]) -> Generator[None]:
+    """Mock device validation for audio manager tests."""
+
+    def mock_validate(device_id: int) -> DeviceInfo:
+        """Return mock validation info for devices.
+
+        Raises:
+            DeviceNotFoundError: If device ID is out of range.
+            DeviceNoOutputError: If device has no output channels.
+
+        """
+        if device_id < 0 or device_id >= len(mock_device_list):
+            raise DeviceNotFoundError(
+                message=f"Device ID {device_id} not found",
+                details={"device_id": device_id},
+            )
+
+        device = mock_device_list[device_id]
+        if device["max_output_channels"] == 0:
+            raise DeviceNoOutputError(
+                message=f"Device '{device['name']}' has no output channels",
+                suggestion="Select a device with output capability",
+                details={"device_name": str(device["name"])},
+            )
+
+        return DeviceInfo(
+            id=device_id,
+            name=str(device["name"]),
+            input_channels=int(device["max_input_channels"]),
+            output_channels=int(device["max_output_channels"]),
+            is_valid_output=int(device["max_output_channels"]) > 0,
+        )
+
+    with patch("src.audio_manager.validate_device", side_effect=mock_validate):
+        yield
 
 
 @pytest.fixture

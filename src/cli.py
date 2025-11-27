@@ -11,7 +11,10 @@ from rich.panel import Panel
 
 from .audio_manager import AudioManager
 from .config import Config
+from .exceptions import MUCError
+from .logging_config import init_logging
 from .soundboard import Soundboard
+from .validators import SUPPORTED_FORMATS, validate_audio_file_safe
 
 # Configure rich-click
 click.rich_click.TEXT_MARKUP = "rich"
@@ -45,14 +48,22 @@ def get_soundboard() -> tuple[Soundboard, AudioManager]:
 
 
 @click.group(invoke_without_command=True)
+@click.option("--debug", is_flag=True, help="Enable debug logging")
 @click.pass_context
 @click.version_option(version="0.2.0", prog_name="muc")
-def cli(ctx: click.Context) -> None:
+def cli(ctx: click.Context, debug: bool) -> None:  # noqa: FBT001
     """[bold cyan]MUC Soundboard[/bold cyan].
 
     Play audio files through your microphone in games using hotkeys.
     Perfect for CS, Battlefield, COD, and more! 🎮🎵
     """
+    # Initialize logging
+    init_logging(debug=debug)
+
+    # Store debug flag in context for subcommands
+    ctx.ensure_object(dict)
+    ctx.obj["debug"] = debug
+
     if ctx.invoked_subcommand is None:
         console.print(
             Panel.fit(
@@ -205,6 +216,51 @@ def stop() -> None:
     soundboard, _ = get_soundboard()
     soundboard.stop_sound()
     console.print("[yellow]■[/yellow] Stopped current sound.")
+
+
+@cli.command()
+def validate() -> None:
+    """Validate all audio files in your library.
+
+    Checks each audio file for corruption or format issues.
+    """
+    config = Config()
+    sounds_dir = config.sounds_dir
+
+    if not sounds_dir.exists():
+        console.print(f"[red]✗[/red] Sounds directory not found: {sounds_dir}")
+        sys.exit(1)
+
+    audio_files = [f for f in sounds_dir.rglob("*") if f.suffix.lower() in SUPPORTED_FORMATS]
+
+    if not audio_files:
+        console.print("[yellow]⚠[/yellow] No audio files found to validate")
+        return
+
+    console.print(f"\n[cyan]Validating {len(audio_files)} audio files...[/cyan]\n")
+
+    valid_count = 0
+    invalid_files: list[tuple[str, str]] = []
+
+    for audio_file in sorted(audio_files):
+        info = validate_audio_file_safe(audio_file)
+
+        if info.is_valid:
+            console.print(
+                f"[green]✓[/green] {audio_file.name} "
+                f"[dim]({info.duration:.1f}s, {info.sample_rate}Hz, {info.channels}ch)[/dim]",
+            )
+            valid_count += 1
+        else:
+            console.print(f"[red]✗[/red] {audio_file.name}: {info.error}")
+            invalid_files.append((audio_file.name, info.error or "Unknown error"))
+
+    console.print(f"\n[bold]Results:[/bold] {valid_count} valid, {len(invalid_files)} invalid")
+
+    if invalid_files:
+        console.print("\n[yellow]Invalid files:[/yellow]")
+        for name, error in invalid_files:
+            console.print(f"  • {name}: [dim]{error}[/dim]")
 
 
 @cli.command()
@@ -364,6 +420,11 @@ def main() -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted.[/yellow]")
         sys.exit(130)
+    except MUCError as e:
+        console.print(f"\n[red]✗[/red] {e.message}")
+        console.print(f"[dim]💡 {e.suggestion}[/dim]")
+        console.print(f"\n[dim]Error code: E{e.code} | Run with --debug for more details[/dim]")
+        sys.exit(1)
     except (OSError, RuntimeError) as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)

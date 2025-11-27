@@ -9,6 +9,10 @@ from rich.console import Console
 from rich.table import Table
 
 from .audio_manager import AudioManager
+from .logging_config import get_logger
+from .validators import SUPPORTED_FORMATS, validate_audio_file_safe
+
+logger = get_logger(__name__)
 
 
 class Soundboard:
@@ -34,36 +38,59 @@ class Soundboard:
         self.sounds: dict[str, Path] = {}
         self.hotkeys: dict[str, str] = {}
         self.listener: keyboard.GlobalHotKeys | None = None
+        self.invalid_files: list[tuple[Path, str]] = []  # Track invalid files
+
+        logger.debug(f"Soundboard initialized with sounds_dir: {self.sounds_dir}")
 
         # Scan for audio files
         self._scan_sounds()
 
     def _scan_sounds(self) -> None:
-        """Scan the sounds directory for audio files."""
+        """Scan the sounds directory for audio files with validation."""
         if not self.sounds_dir.exists():
+            logger.warning(f"Sounds directory not found: {self.sounds_dir}")
             self.console.print(
                 f"[yellow]⚠[/yellow] Sounds directory not found: {self.sounds_dir}",
             )
             return
 
-        supported_formats = [".wav", ".mp3", ".ogg", ".flac", ".m4a"]
+        supported_extensions = list(SUPPORTED_FORMATS)
+        self.invalid_files = []
 
         for audio_file in self.sounds_dir.rglob("*"):
-            if audio_file.suffix.lower() in supported_formats:
-                # Use filename without extension as the sound name
-                sound_name = audio_file.stem
-                self.sounds[sound_name] = audio_file
+            if audio_file.suffix.lower() in supported_extensions:
+                # Validate the audio file
+                file_info = validate_audio_file_safe(audio_file)
+
+                if file_info.is_valid:
+                    # Use filename without extension as the sound name
+                    sound_name = audio_file.stem
+                    self.sounds[sound_name] = audio_file
+                    logger.debug(f"Found valid sound: {sound_name}")
+                else:
+                    # Track invalid files but don't crash
+                    self.invalid_files.append((audio_file, file_info.error or "Unknown error"))
+                    logger.warning(f"Invalid audio file: {audio_file} - {file_info.error}")
 
         if self.sounds:
+            logger.info(f"Found {len(self.sounds)} valid audio files")
             self.console.print(
                 f"\n[green]✓[/green] Found [bold]{len(self.sounds)}[/bold] audio files",
             )
+
+            # Report invalid files if any
+            if self.invalid_files:
+                self.console.print(
+                    f"[yellow]⚠[/yellow] {len(self.invalid_files)} file(s) could not be loaded",
+                )
+                self.console.print("[dim]Run 'muc validate' for details[/dim]")
         else:
+            logger.warning(f"No audio files found in {self.sounds_dir}")
             self.console.print(
                 f"\n[yellow]⚠[/yellow] No audio files found in {self.sounds_dir}",
             )
             self.console.print(
-                f"[dim]Supported formats: {', '.join(supported_formats)}[/dim]",
+                f"[dim]Supported formats: {', '.join(sorted(SUPPORTED_FORMATS))}[/dim]",
             )
 
     def setup_default_hotkeys(self) -> None:
@@ -116,6 +143,7 @@ class Soundboard:
     def start_listening(self) -> None:
         """Start listening for hotkeys."""
         if not self.hotkeys:
+            logger.warning("No hotkeys configured")
             self.console.print(
                 "[yellow]⚠[/yellow] No hotkeys configured. Use setup_default_hotkeys() first.",
             )
@@ -132,7 +160,9 @@ class Soundboard:
         try:
             self.listener = keyboard.GlobalHotKeys(handlers)
             self.listener.start()
+            logger.info("Hotkey listener started")
         except (OSError, RuntimeError) as e:
+            logger.exception("Failed to start hotkey listener")
             self.console.print(f"[red]Error:[/red] {e}")
 
     def stop_listening(self) -> None:
@@ -140,6 +170,7 @@ class Soundboard:
         if self.listener:
             self.listener.stop()
             self.listener = None
+            logger.debug("Hotkey listener stopped")
 
     def play_sound(self, sound_name: str, *, blocking: bool = False) -> bool:
         """Manually play a sound by name.
@@ -154,7 +185,9 @@ class Soundboard:
         """
         audio_file = self.sounds.get(sound_name)
         if audio_file:
+            logger.debug(f"Playing sound: {sound_name}")
             return self.audio_manager.play_audio(audio_file, blocking=blocking)
+        logger.warning(f"Sound not found: {sound_name}")
         self.console.print(f"[red]✗[/red] Sound '{sound_name}' not found.")
         return False
 

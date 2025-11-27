@@ -4,9 +4,21 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
 from rich.console import Console
 
 from src.soundboard import Soundboard
+
+
+@pytest.fixture(autouse=True)
+def use_mock_audio_validation(mock_audio_validation: MagicMock) -> MagicMock:
+    """Use mock audio validation for all soundboard tests.
+
+    Returns:
+        The mock audio validation object.
+
+    """
+    return mock_audio_validation
 
 
 class TestSoundboardScanning:

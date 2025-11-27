@@ -1,6 +1,13 @@
 [project]
 authors = [{ name = "Harshal Laheri", email = "harshal@harshallaheri.me" }]
-dependencies = ["sounddevice>=0.4.6", "soundfile>=0.12.1", "numpy>=1.24.0", "pynput>=1.7.6", "rich-click>=1.9.4"]
+dependencies = [
+    "sounddevice>=0.4.6",
+    "soundfile>=0.12.1",
+    "numpy>=1.24.0",
+    "pynput>=1.7.6",
+    "rich-click>=1.9.4",
+    "loguru>=0.7.3",
+]
 description = "Play audio through your microphone in games using hotkeys"
 name = "muc"
 readme = "README.md"
@@ -32,7 +39,7 @@ muc = "src.cli:main"
 
 [tool.ruff]
 line-length = 120
-lint.ignore = ["S101", "PLR6301", "PLR2004", "SLF001"]
+lint.ignore = ["S101", "PLR6301", "PLR2004", "SLF001", "G004", "TRY003", "EM102", "EM101", "C901", "PLR0911"]
 
 [tool.pytest.ini_options]
 addopts = ["-v", "--tb=short", "--strict-markers", "-ra"]

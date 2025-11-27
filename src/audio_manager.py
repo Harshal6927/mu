@@ -10,6 +10,17 @@ import soundfile as sf
 from rich.console import Console
 from rich.table import Table
 
+from .exceptions import (
+    AudioFileCorruptedError,
+    DeviceDisconnectedError,
+    DeviceNoOutputError,
+    DeviceNotFoundError,
+)
+from .logging_config import get_logger
+from .validators import validate_device
+
+logger = get_logger(__name__)
+
 
 class AudioManager:
     """Manages audio devices and playback operations."""
@@ -25,8 +36,9 @@ class AudioManager:
         self.current_stream = None
         self.output_device_id: int | None = None
         self.volume: float = 1.0
+        logger.debug("AudioManager initialized")
 
-    def list_devices(self):  # noqa: ANN201, PLR6301
+    def list_devices(self):  # noqa: ANN201
         """List all available audio devices.
 
         Returns:
@@ -90,21 +102,25 @@ class AudioManager:
             True if device was set successfully, False otherwise.
 
         """
-        devices = self.list_devices()
-        if 0 <= device_id < len(devices):
-            device = sd.query_devices(device_id)
-            if device["max_output_channels"] > 0:  # pyright: ignore[reportArgumentType, reportCallIssue]
-                self.output_device_id = device_id
-                self.console.print(
-                    f"[green]✓[/green] Output device set to: [bold]{device['name']}[/bold]",  # pyright: ignore[reportArgumentType, reportCallIssue]
-                )
-                return True
-            self.console.print(
-                f"[red]✗[/red] Device {device_id} has no output channels.",
-            )
+        try:
+            device_info = validate_device(device_id)
+            self.output_device_id = device_id
+            logger.info(f"Output device set to: {device_info.name} (ID: {device_id})")
+        except DeviceNotFoundError as e:
+            logger.warning(f"Device not found: {e}")
+            self.console.print(f"[red]✗[/red] {e.message}")
+            self.console.print(f"[dim]💡 {e.suggestion}[/dim]")
             return False
-        self.console.print(f"[red]✗[/red] Invalid device ID: {device_id}")
-        return False
+        except DeviceNoOutputError as e:
+            logger.warning(f"Device has no output: {e}")
+            self.console.print(f"[red]✗[/red] {e.message}")
+            self.console.print(f"[dim]💡 {e.suggestion}[/dim]")
+            return False
+        else:
+            self.console.print(
+                f"[green]✓[/green] Output device set to: [bold]{device_info.name}[/bold]",
+            )
+            return True
 
     def set_volume(self, volume: float) -> None:
         """Set the playback volume level.
@@ -115,6 +131,7 @@ class AudioManager:
         """
         self.volume = max(0.0, min(1.0, volume))  # Clamp between 0 and 1
         percentage = int(self.volume * 100)
+        logger.debug(f"Volume set to {percentage}%")
         self.console.print(f"[cyan]♪[/cyan] Volume set to {percentage}%")
 
     @staticmethod
@@ -158,18 +175,31 @@ class AudioManager:
 
         """
         if self.output_device_id is None:
+            logger.warning("No output device selected")
             self.console.print(
-                "[yellow]⚠[/yellow] No output device selected. Use set_output_device() first.",
+                "[yellow]⚠[/yellow] No output device selected. Use 'muc setup' first.",
             )
             return False
 
         if not audio_file.exists():
+            logger.warning(f"Audio file not found: {audio_file}")
             self.console.print(f"[red]✗[/red] Audio file not found: {audio_file}")
+            return False
+
+        # Verify device is still available before playback
+        try:
+            validate_device(self.output_device_id)
+        except (DeviceNotFoundError, DeviceNoOutputError) as e:
+            logger.exception("Device validation failed")
+            self.console.print(f"[red]✗[/red] {e.message}")
+            self.console.print(f"[dim]💡 {e.suggestion}[/dim]")
             return False
 
         try:
             # Stop any currently playing audio
             self.stop_audio()
+
+            logger.debug(f"Loading audio file: {audio_file}")
 
             # Load and play the audio file
             data, samplerate = sf.read(str(audio_file))  # pyright: ignore[reportGeneralTypeIssues]
@@ -183,19 +213,47 @@ class AudioManager:
             device_info = sd.query_devices(self.output_device_id)
             max_channels = device_info["max_output_channels"]  # pyright: ignore[reportCallIssue, reportArgumentType]
 
+            logger.debug(
+                f"Audio info: duration={len(data) / samplerate:.2f}s, rate={samplerate}, channels={data.shape[1]}",
+            )
+
             # Adjust channels if needed
             data = self._adjust_channels(data, max_channels)
 
             # Apply volume scaling
             data *= self.volume
 
+            logger.debug(f"Starting playback to device {self.output_device_id}")
             sd.play(data, samplerate, device=self.output_device_id)
 
             if blocking:
                 # Use polling loop instead of sd.wait() to allow KeyboardInterrupt
                 while sd.get_stream() and sd.get_stream().active:
                     time.sleep(0.1)
+
+        except sf.LibsndfileError as e:
+            logger.exception("Failed to read audio file")
+            error = AudioFileCorruptedError(
+                f"Cannot read audio file: {audio_file.name}",
+                details={"path": str(audio_file), "error": str(e)},
+            )
+            self.console.print(f"[red]✗[/red] {error.message}")
+            self.console.print(f"[dim]💡 {error.suggestion}[/dim]")
+            return False
+        except sd.PortAudioError as e:
+            # Device disconnection or error during playback
+            if "device" in str(e).lower() or "stream" in str(e).lower():
+                logger.exception("Device error during playback")
+                error = DeviceDisconnectedError(
+                    details={"device_id": self.output_device_id, "error": str(e)},
+                )
+                self.console.print(f"[red]✗[/red] {error.message}")
+                self.console.print(f"[dim]💡 {error.suggestion}[/dim]")
+            else:
+                self.console.print(f"[red]Error:[/red] {e}")
+            return False
         except (OSError, RuntimeError) as e:
+            logger.exception("Playback error")
             self.console.print(f"[red]Error:[/red] {e}")
             return False
         else:
@@ -208,10 +266,12 @@ class AudioManager:
         """Stop any currently playing audio."""
         try:
             sd.stop()
+            logger.debug("Audio playback stopped")
         except (OSError, RuntimeError) as e:
+            logger.exception("Error stopping audio")
             self.console.print(f"[red]Error stopping audio:[/red] {e}")
 
-    def is_playing(self) -> bool:  # noqa: PLR6301
+    def is_playing(self) -> bool:
         """Check if audio is currently playing.
 
         Returns:

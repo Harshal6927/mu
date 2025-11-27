@@ -36,6 +36,17 @@ def mock_config(temp_sounds_dir: Path) -> MagicMock:
     return mock
 
 
+@pytest.fixture(autouse=True)
+def use_mock_audio_validation(mock_audio_validation: MagicMock) -> MagicMock:
+    """Use mock audio validation for all CLI tests.
+
+    Returns:
+        MagicMock: The mock audio validation object.
+
+    """
+    return mock_audio_validation
+
+
 class TestCLIDevices:
     """Tests for 'muc devices' command."""
 
@@ -199,8 +210,8 @@ class TestCLIPlay:
         ):
             result = cli_runner.invoke(cli, ["play", "sound1"])
 
-        # Should still work but warn about no device
-        assert "No output device" in result.output or result.exit_code == 0
+        # Should show error about no output device
+        assert "No output device" in result.output or result.exit_code == 1
 
     def test_play_nonexistent_sound(
         self,
