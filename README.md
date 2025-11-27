@@ -5,12 +5,16 @@ Play audio files through your microphone in multiplayer games like CS, Battlefie
 ## ✨ Features
 
 - 🎵 **Play audio through your mic** - Route sound to your virtual microphone
-- ⌨️ **Hotkey support** - F1-F10 keys for instant sound playback
+- ⌨️ **Custom hotkeys** - Bind any key combination to any sound (F1-F12, Ctrl+, Alt+, etc.)
+- 🏷️ **Tags & categories** - Organize sounds with tags and filter by category
+- ⭐ **Favorites** - Mark and quickly access your most-used sounds
+- 🔊 **Per-sound volume** - Set individual volume levels (0-200%) for each sound
+- 📋 **Queue & playlists** - Build queues and save them as reusable playlists
 - 🎨 **Beautiful CLI** - Rich-click powered interface with colors and tables
 - 🎛️ **Multiple formats** - Supports WAV, MP3, OGG, FLAC, M4A
-- 🔊 **Auto-detection** - Finds VB-Cable and virtual audio devices automatically
+- 🔍 **Auto-detection** - Finds VB-Cable and virtual audio devices automatically
 - 📁 **Organized library** - Subdirectory support for sound organization
-- 🔉 **Volume control** - Adjustable playback volume with persistent settings
+- 🔉 **Global volume** - Adjustable playback volume with persistent settings
 - 🎲 **Auto-play mode** - Play all sounds randomly or sequentially
 - ⚙️ **Persistent config** - Saves your settings to `~/.muc/config.json`
 - 🎮 **Gaming ready** - Perfect for CS, Battlefield, COD, and more!
@@ -97,17 +101,51 @@ muc devices        # List all audio devices
 
 # Sound management
 muc sounds         # List available sounds in your library
+muc sounds --tag meme        # Filter by tag
+muc sounds --favorites       # Show only favorites
 muc play [name]    # Play a specific sound (prompts if no name)
 muc stop           # Stop currently playing sound
 muc auto           # Play all sounds randomly (use --sequential for alphabetical order)
+muc info [name]    # Show detailed info about a sound
+
+# Tags & organization
+muc tag airhorn meme loud    # Add tags to a sound
+muc untag airhorn loud       # Remove tags from a sound
+muc tags                     # List all tags with counts
+
+# Favorites
+muc favorite airhorn         # Toggle favorite status
+muc favorite airhorn --on    # Add to favorites
+muc favorites                # List all favorites
 
 # Volume control
-muc volume         # Show current volume
-muc volume 0.5     # Set volume to 50% (0.0 to 1.0)
+muc volume         # Show current global volume
+muc volume 0.5     # Set global volume to 50% (0.0 to 1.0)
+muc sound-volume airhorn 1.5   # Set per-sound volume to 150% (0.0 to 2.0)
 
-# Hotkey control
-muc hotkeys        # Show hotkey bindings (F1-F10)
-muc listen         # Start hotkey listener (press ESC to stop)
+# Custom hotkeys
+muc bind f1 airhorn          # Bind F1 to play airhorn
+muc bind "<ctrl>+a" applause # Bind Ctrl+A to applause
+muc unbind f1                # Remove hotkey binding
+muc unbind airhorn           # Remove all bindings for a sound
+muc hotkeys                  # Show all hotkey bindings
+muc hotkeys-reset            # Reset to default F1-F10 bindings
+muc listen                   # Start hotkey listener (press ESC to stop)
+
+# Queue management
+muc queue add airhorn explosion  # Add sounds to queue
+muc queue show               # Show current queue
+muc queue play               # Play queue sequentially
+muc queue skip               # Skip to next sound
+muc queue shuffle            # Shuffle the queue
+muc queue clear              # Clear the queue
+
+# Playlists
+muc playlist save mylist     # Save current queue as playlist
+muc playlist load mylist     # Load playlist into queue
+muc playlist list            # List all saved playlists
+muc playlist show mylist     # Show playlist contents
+muc playlist delete mylist   # Delete a playlist
 
 # Interactive mode
 muc interactive    # Launch full interactive menu
@@ -142,15 +180,28 @@ muc --help         # Show all commands
 
 ### Hotkey Bindings
 
-The first 10 sounds (alphabetically) are automatically mapped to:
-- **F1** → First sound
-- **F2** → Second sound
-- **F3** → Third sound
-- ... through **F10**
+By default, the first 10 sounds (alphabetically) are mapped to F1-F10.
+
+**Custom hotkeys** let you bind any key combination:
+```bash
+muc bind f1 airhorn              # Simple key
+muc bind "<ctrl>+<shift>+a" boom # Modifier keys
+muc bind "<alt>+1" explosion     # Alt + number
+```
+
+**Hotkey modes** (set in config):
+- `default` - Only use auto-assigned F1-F10
+- `custom` - Only use your custom bindings
+- `merged` - Use both (default)
 
 View bindings:
 ```bash
 muc hotkeys
+```
+
+Reset to defaults:
+```bash
+muc hotkeys-reset
 ```
 
 ### Interactive Menu Mode
@@ -225,11 +276,20 @@ Configuration is automatically saved to `~/.muc/config.json`:
 {
   "output_device_id": 6,
   "sounds_dir": "C:/path/to/muc/sounds",
-  "volume": 1.0
+  "volume": 1.0,
+  "hotkeys": {
+    "<f1>": "airhorn",
+    "<ctrl>+<shift>+a": "applause"
+  },
+  "hotkey_mode": "merged"
 }
 ```
 
-You can manually edit this file or reconfigure using:
+**Additional data files:**
+- `~/.muc/metadata.json` - Sound tags, favorites, volumes, play counts
+- `~/.muc/playlists.json` - Saved playlists
+
+You can manually edit these files or use CLI commands:
 ```bash
 muc setup
 ```
@@ -327,36 +387,43 @@ mkdir ~\.muc
 This project implements a clean software architecture:
 
 ```
-┌─────────────┐
-│  CLI Layer  │  ← Rich-click commands (cli.py)
-└──────┬──────┘
-       │
-┌──────▼──────┐
-│   Config    │  ← Settings management (config.py)
-└──────┬──────┘
-       │
-┌──────▼──────────────┬──────────────┐
-│   Soundboard        │ Audio Manager│
-│  (hotkeys, sounds)  │ (devices, io)│
-└─────────────────────┴──────────────┘
-          │                    │
-          └──────┬─────────────┘
-                 ▼
-        ┌────────────────┐
-        │  Audio Drivers │
-        │ (sounddevice)  │
-        └───────┬────────┘
-                ▼
-        Virtual Audio Device
-        (VB-Cable, etc.)
+┌─────────────────────────────────────────────────────┐
+│                    CLI Layer                        │
+│            Rich-click commands (cli.py)             │
+└───────────────────────┬─────────────────────────────┘
+                        │
+        ┌───────────────┼───────────────┐
+        │               │               │
+┌───────▼───────┐ ┌─────▼─────┐ ┌───────▼───────┐
+│    Config     │ │  Metadata │ │ Queue Manager │
+│  (settings)   │ │(tags,favs)│ │ (playlists)   │
+└───────┬───────┘ └─────┬─────┘ └───────┬───────┘
+        │               │               │
+        └───────────────┼───────────────┘
+                        │
+┌───────────────────────▼─────────────────────────────┐
+│                   Soundboard                        │
+│     (sound library, hotkey manager, playback)       │
+└───────────────────────┬─────────────────────────────┘
+                        │
+┌───────────────────────▼─────────────────────────────┐
+│                  Audio Manager                      │
+│           (devices, volume, playback)               │
+└───────────────────────┬─────────────────────────────┘
+                        │
+┌───────────────────────▼─────────────────────────────┐
+│              Virtual Audio Device                   │
+│              (VB-Cable, etc.)                       │
+└─────────────────────────────────────────────────────┘
 ```
 
 **Flow**:
 1. User runs command → CLI parses → Config loads settings
-2. Soundboard scans sounds → Sets up hotkeys
-3. User presses F1 → Hotkey handler triggered
-4. Audio Manager loads file → Outputs to virtual device
-5. Game reads from virtual device → Teammates hear sound
+2. Soundboard scans sounds → Loads metadata (tags, volumes)
+3. HotkeyManager sets up bindings (default + custom)
+4. User presses hotkey → Handler triggered → Metadata volume applied
+5. Audio Manager loads file → Outputs to virtual device
+6. Game reads from virtual device → Teammates hear sound
 
 ## 📁 Project Structure
 
@@ -368,12 +435,18 @@ muc/
 │   ├── config.py            # Configuration management
 │   ├── audio_manager.py     # Audio device & playback
 │   ├── soundboard.py        # Sound library & hotkeys
-│   └── main.py              # Entry point
+│   ├── metadata.py          # Tags, favorites, per-sound volume
+│   ├── hotkey_manager.py    # Custom hotkey bindings
+│   ├── queue_manager.py     # Queue & playlist management
+│   ├── validators.py        # Input validation
+│   ├── exceptions.py        # Custom exceptions
+│   └── logging_config.py    # Logging setup
 ├── sounds/                  # Audio files directory
 │   └── README.md            # Sound library guide
+├── tests/                   # Unit & integration tests
 ├── pyproject.toml           # Project metadata & dependencies
 ├── README.md                # This file
-└── idea.md                  # Original design document
+└── Makefile                 # Development commands
 ```
 
 ## 🤝 Contributing

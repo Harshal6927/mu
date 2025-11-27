@@ -254,6 +254,22 @@ def validate_config_data(data: dict) -> dict:
         else:
             validated["sounds_dir"] = sounds_dir
 
+    # Validate hotkeys
+    hotkeys = data.get("hotkeys", {})
+    if not isinstance(hotkeys, dict):
+        errors.append(f"hotkeys must be a dictionary, got: {type(hotkeys).__name__}")
+    else:
+        validated["hotkeys"] = hotkeys
+
+    # Validate hotkey_mode
+    hotkey_mode = data.get("hotkey_mode", "merged")
+    valid_modes = {"default", "custom", "merged"}
+    if hotkey_mode not in valid_modes:
+        logger.warning(f"Invalid hotkey_mode '{hotkey_mode}', using 'merged'")
+        validated["hotkey_mode"] = "merged"
+    else:
+        validated["hotkey_mode"] = hotkey_mode
+
     if errors:
         raise ConfigInvalidFieldError(
             "Invalid configuration values",

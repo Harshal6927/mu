@@ -58,7 +58,7 @@ def setup_logging(*, debug: bool = False, log_to_file: bool = True) -> None:
             LOG_FILE,
             format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}",
             level="DEBUG",
-            rotation="10 MB",
+            rotation="1 MB",
             retention="5 days",
             compression="zip",
             enqueue=True,  # Thread-safe

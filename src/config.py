@@ -20,6 +20,8 @@ class Config:
         self.sounds_dir = Path.cwd() / "sounds"
         self.output_device_id: int | None = None
         self.volume: float = 1.0
+        self.hotkeys: dict[str, str] = {}
+        self.hotkey_mode: str = "merged"  # "default" | "custom" | "merged"
 
         # Load existing config if it exists
         self.load()
@@ -43,6 +45,8 @@ class Config:
             self.volume = data.get("volume", 1.0)
             if "sounds_dir" in data:
                 self.sounds_dir = Path(data["sounds_dir"])
+            self.hotkeys = data.get("hotkeys", {})
+            self.hotkey_mode = data.get("hotkey_mode", "merged")
 
             logger.info(f"Config loaded: device={self.output_device_id}, volume={self.volume}")
 
@@ -76,6 +80,8 @@ class Config:
             "output_device_id": self.output_device_id,
             "sounds_dir": str(self.sounds_dir),
             "volume": self.volume,
+            "hotkeys": self.hotkeys,
+            "hotkey_mode": self.hotkey_mode,
         }
 
         try:

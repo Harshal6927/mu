@@ -210,7 +210,11 @@ class TestSoundboardPlayback:
         soundboard.play_sound("sound1")
 
         expected_path = temp_sounds_dir / "sound1.wav"
-        mock_audio_manager.play_audio.assert_called_with(expected_path, blocking=False)
+        mock_audio_manager.play_audio.assert_called_with(
+            expected_path,
+            blocking=False,
+            sound_volume=1.0,
+        )
 
     def test_play_sound_invalid(self, console: Console, temp_sounds_dir: Path, mock_audio_manager: MagicMock) -> None:
         """Should return False for non-existent sound."""
@@ -228,7 +232,11 @@ class TestSoundboardPlayback:
         soundboard.play_sound("sound1", blocking=True)
 
         expected_path = temp_sounds_dir / "sound1.wav"
-        mock_audio_manager.play_audio.assert_called_with(expected_path, blocking=True)
+        mock_audio_manager.play_audio.assert_called_with(
+            expected_path,
+            blocking=True,
+            sound_volume=1.0,
+        )
 
     def test_stop_sound(self, console: Console, temp_sounds_dir: Path, mock_audio_manager: MagicMock) -> None:
         """Should stop audio through audio manager."""

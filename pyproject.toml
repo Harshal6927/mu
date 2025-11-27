@@ -39,7 +39,20 @@ muc = "src.cli:main"
 
 [tool.ruff]
 line-length = 120
-lint.ignore = ["S101", "PLR6301", "PLR2004", "SLF001", "G004", "TRY003", "EM102", "EM101", "C901", "PLR0911"]
+lint.ignore = [
+    "S101",
+    "PLR6301",
+    "PLR2004",
+    "SLF001",
+    "G004",
+    "TRY003",
+    "EM102",
+    "EM101",
+    "C901",
+    "PLR0911",
+    "PLR0914",
+    "PLR0912",
+]
 
 [tool.pytest.ini_options]
 addopts = ["-v", "--tb=short", "--strict-markers", "-ra"]

@@ -8,13 +8,17 @@ import rich_click as click
 from pynput import keyboard
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 
 from .audio_manager import AudioManager
 from .config import Config
 from .exceptions import MUCError
+from .hotkey_manager import HotkeyManager
 from .logging_config import init_logging
+from .metadata import MetadataManager
+from .queue_manager import QueueManager
 from .soundboard import Soundboard
-from .validators import SUPPORTED_FORMATS, validate_audio_file_safe
+from .validators import SUPPORTED_FORMATS, validate_audio_file, validate_audio_file_safe
 
 # Configure rich-click
 click.rich_click.TEXT_MARKUP = "rich"
@@ -36,6 +40,8 @@ def get_soundboard() -> tuple[Soundboard, AudioManager]:
     """
     config = Config()
     audio_manager = AudioManager(console)
+    metadata_manager = MetadataManager()
+    hotkey_manager = HotkeyManager(config)
 
     if config.output_device_id is not None:
         audio_manager.set_output_device(config.output_device_id)
@@ -43,7 +49,13 @@ def get_soundboard() -> tuple[Soundboard, AudioManager]:
     # Set volume from config (silently, without printing)
     audio_manager.volume = config.volume
 
-    soundboard = Soundboard(audio_manager, config.sounds_dir, console)
+    soundboard = Soundboard(
+        audio_manager,
+        config.sounds_dir,
+        console,
+        metadata_manager=metadata_manager,
+        hotkey_manager=hotkey_manager,
+    )
     return soundboard, audio_manager
 
 
@@ -147,16 +159,83 @@ def play(sound_name: str | None) -> None:
 
 
 @cli.command()
-def sounds() -> None:
-    """List all available sounds in your library."""
+@click.option("--tag", "-t", "filter_tag", help="Filter by tag (comma-separated for multiple)")
+@click.option("--favorites", "-f", is_flag=True, help="Show only favorites")
+def sounds(filter_tag: str | None, favorites: bool) -> None:  # noqa: FBT001
+    """List all available sounds in your library.
+
+    Use --tag to filter by tags, --favorites to show only favorites.
+    """
     soundboard, _ = get_soundboard()
+    metadata = MetadataManager()
 
     if not soundboard.sounds:
         console.print("[red]✗[/red] No sounds found.")
         console.print(f"[dim]Add audio files to: {soundboard.sounds_dir}[/dim]")
         sys.exit(1)
 
-    soundboard.list_sounds()
+    # Get all sound names
+    sound_names = sorted(soundboard.sounds.keys())
+
+    # Filter by tag if specified
+    if filter_tag:
+        tags = [t.strip() for t in filter_tag.split(",")]
+        tagged_sounds = set(metadata.get_sounds_by_tags(tags))
+        sound_names = [s for s in sound_names if s in tagged_sounds]
+        if not sound_names:
+            console.print(f"[yellow]⚠[/yellow] No sounds found with tag(s): {filter_tag}")
+            return
+
+    # Filter by favorites if specified
+    if favorites:
+        favorite_sounds = set(metadata.get_favorites())
+        sound_names = [s for s in sound_names if s in favorite_sounds]
+        if not sound_names:
+            console.print("[yellow]⚠[/yellow] No favorite sounds yet. Use 'muc favorite <sound>' to add.")
+            return
+
+    # Build table with extended columns
+    title = "★ Favorite Sounds" if favorites else "Available Sounds"
+    table = Table(title=title, show_header=True, header_style="bold cyan")
+    table.add_column("#", style="dim", width=4, justify="right")
+    table.add_column("Sound Name", style="white")
+    table.add_column("Vol", style="cyan", justify="center", width=5)
+    table.add_column("Tags", style="blue", max_width=20)
+    table.add_column("Hotkey", style="green", justify="center", width=10)
+    table.add_column("Plays", style="dim", justify="right", width=6)
+
+    # Setup hotkeys to show in table
+    soundboard.setup_hotkeys()
+
+    for idx, name in enumerate(sound_names, 1):
+        meta = metadata.get_metadata(name)
+
+        # Volume indicator
+        vol_display = f"{int(meta.volume * 100)}%"
+
+        # Tags
+        tags_str = ", ".join(meta.tags[:3]) if meta.tags else "-"
+        if len(meta.tags) > 3:
+            tags_str += "..."
+
+        # Hotkey
+        hotkey = next((k for k, v in soundboard.hotkeys.items() if v == name), None)
+        hotkey_display = hotkey.upper() if hotkey else "-"
+
+        # Favorite indicator
+        fav_indicator = "★ " if meta.favorite else ""
+        name_display = f"{fav_indicator}{name}"
+
+        table.add_row(
+            str(idx),
+            name_display,
+            vol_display,
+            tags_str,
+            hotkey_display,
+            str(meta.play_count),
+        )
+
+    console.print(table)
 
 
 @cli.command()
@@ -168,15 +247,548 @@ def hotkeys() -> None:
         console.print("[red]✗[/red] No sounds found.")
         sys.exit(1)
 
-    soundboard.setup_default_hotkeys()
+    soundboard.setup_hotkeys()
     soundboard.list_hotkeys()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tag Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.command()
+@click.argument("sound_name")
+@click.argument("tags", nargs=-1, required=True)
+def tag(sound_name: str, tags: tuple[str, ...]) -> None:
+    """Add tags to a sound.
+
+    Example: muc tag airhorn meme loud effect
+    """
+    soundboard, _ = get_soundboard()
+    metadata = MetadataManager()
+
+    if sound_name not in soundboard.sounds:
+        console.print(f"[red]✗[/red] Sound '{sound_name}' not found")
+        sys.exit(1)
+
+    added = [tag_name for tag_name in tags if metadata.add_tag(sound_name, tag_name)]
+
+    if added:
+        console.print(f"[green]✓[/green] Added tags to '{sound_name}': {', '.join(added)}")
+    else:
+        console.print(f"[yellow]⚠[/yellow] All tags already exist on '{sound_name}'")
+
+
+@cli.command()
+@click.argument("sound_name")
+@click.argument("tags", nargs=-1, required=True)
+def untag(sound_name: str, tags: tuple[str, ...]) -> None:
+    """Remove tags from a sound.
+
+    Example: muc untag airhorn loud
+    """
+    soundboard, _ = get_soundboard()
+    metadata = MetadataManager()
+
+    if sound_name not in soundboard.sounds:
+        console.print(f"[red]✗[/red] Sound '{sound_name}' not found")
+        sys.exit(1)
+
+    removed = [tag_name for tag_name in tags if metadata.remove_tag(sound_name, tag_name)]
+
+    if removed:
+        console.print(f"[green]✓[/green] Removed tags from '{sound_name}': {', '.join(removed)}")
+    else:
+        console.print(f"[yellow]⚠[/yellow] None of the specified tags were on '{sound_name}'")
+
+
+@cli.command()
+def tags() -> None:
+    """List all tags with their usage counts."""
+    metadata = MetadataManager()
+    tag_counts = metadata.get_all_tags_with_counts()
+
+    if not tag_counts:
+        console.print("[yellow]⚠[/yellow] No tags found. Use 'muc tag <sound> <tags>' to add tags.")
+        return
+
+    table = Table(title="Tags", show_header=True, header_style="bold cyan")
+    table.add_column("Tag", style="blue")
+    table.add_column("Sounds", style="white", justify="right")
+
+    for tag_name, count in sorted(tag_counts.items()):
+        table.add_row(tag_name, str(count))
+
+    console.print(table)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Favorites Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.command()
+@click.argument("sound_name")
+@click.option("--on", "set_on", is_flag=True, help="Set as favorite")
+@click.option("--off", "set_off", is_flag=True, help="Remove from favorites")
+def favorite(sound_name: str, set_on: bool, set_off: bool) -> None:  # noqa: FBT001
+    """Toggle or set favorite status for a sound.
+
+    Examples:
+        muc favorite airhorn          # Toggle
+        muc favorite airhorn --on     # Add to favorites
+        muc favorite airhorn --off    # Remove from favorites
+
+    """
+    soundboard, _ = get_soundboard()
+    metadata = MetadataManager()
+
+    if sound_name not in soundboard.sounds:
+        console.print(f"[red]✗[/red] Sound '{sound_name}' not found")
+        sys.exit(1)
+
+    if set_on:
+        metadata.set_favorite(sound_name, is_favorite=True)
+        is_fav = True
+    elif set_off:
+        metadata.set_favorite(sound_name, is_favorite=False)
+        is_fav = False
+    else:
+        is_fav = metadata.toggle_favorite(sound_name)
+
+    status = "[yellow]★[/yellow] Favorite" if is_fav else "Not favorite"
+    console.print(f"[green]✓[/green] '{sound_name}' is now: {status}")
+
+
+@cli.command()
+def favorites() -> None:
+    """List all favorite sounds."""
+    soundboard, _ = get_soundboard()
+    metadata = MetadataManager()
+
+    favorites_list = [name for name in soundboard.sounds if metadata.get_metadata(name).favorite]
+
+    if not favorites_list:
+        console.print("[yellow]⚠[/yellow] No favorites yet. Use 'muc favorite <sound>' to add.")
+        return
+
+    soundboard.setup_hotkeys()
+
+    table = Table(title="★ Favorite Sounds", show_header=True, header_style="bold yellow")
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Sound Name", style="white")
+    table.add_column("Hotkey", style="green")
+
+    for idx, name in enumerate(sorted(favorites_list), 1):
+        hotkey = next((k for k, v in soundboard.hotkeys.items() if v == name), "-")
+        table.add_row(str(idx), name, hotkey.upper() if hotkey != "-" else "-")
+
+    console.print(table)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-Sound Volume and Info Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.command(name="sound-volume")
+@click.argument("sound_name")
+@click.argument("level", type=click.FloatRange(0.0, 2.0), required=False)
+def sound_volume(sound_name: str, level: float | None) -> None:
+    """Set or display volume for a specific sound.
+
+    Volume range: 0.0 (mute) to 2.0 (200%).
+    Final volume = sound_volume x global_volume
+
+    Examples:
+        muc sound-volume airhorn 0.5   # Set to 50%
+        muc sound-volume airhorn       # Show current
+
+    """
+    soundboard, _ = get_soundboard()
+    metadata = MetadataManager()
+
+    if sound_name not in soundboard.sounds:
+        console.print(f"[red]✗[/red] Sound '{sound_name}' not found")
+        sys.exit(1)
+
+    meta = metadata.get_metadata(sound_name)
+
+    if level is None:
+        percentage = int(meta.volume * 100)
+        console.print(f"[cyan]Volume for '{sound_name}':[/cyan] {percentage}%")
+    else:
+        metadata.set_volume(sound_name, level)
+        percentage = int(level * 100)
+        console.print(f"[green]✓[/green] Volume for '{sound_name}' set to {percentage}%")
+
+
+@cli.command()
+@click.argument("sound_name")
+@click.option("--preview", "-p", is_flag=True, help="Play first 3 seconds")
+def info(sound_name: str, preview: bool) -> None:  # noqa: FBT001
+    """Show detailed information about a sound.
+
+    Example: muc info airhorn
+    """
+    soundboard, _ = get_soundboard()
+    metadata = MetadataManager()
+
+    if sound_name not in soundboard.sounds:
+        console.print(f"[red]✗[/red] Sound '{sound_name}' not found")
+        sys.exit(1)
+
+    audio_path = soundboard.sounds[sound_name]
+    meta = metadata.get_metadata(sound_name)
+
+    # Get audio file info
+    try:
+        file_info = validate_audio_file(audio_path)
+    except MUCError as e:
+        console.print(f"[red]✗[/red] Cannot read file: {e.message}")
+        sys.exit(1)
+
+    # Format duration
+    duration_mins = int(file_info.duration // 60)
+    duration_secs = file_info.duration % 60
+    duration_str = f"{duration_mins}:{duration_secs:05.2f}"
+
+    # File size
+    file_size = audio_path.stat().st_size
+    size_str = f"{file_size / (1024 * 1024):.1f} MB" if file_size > 1024 * 1024 else f"{file_size / 1024:.1f} KB"
+
+    # Last played formatting
+    last_played_str = meta.last_played.strftime("%Y-%m-%d %H:%M") if meta.last_played else "Never"
+
+    # Build info panel
+    info_text = f"""[bold cyan]{sound_name}[/bold cyan]
+
+[bold]File Information[/bold]
+├── Path: {audio_path}
+├── Format: {file_info.format}
+├── Size: {size_str}
+├── Duration: {duration_str}
+├── Sample Rate: {file_info.sample_rate} Hz
+└── Channels: {file_info.channels} ({"Stereo" if file_info.channels >= 2 else "Mono"})
+
+[bold]Metadata[/bold]
+├── Tags: {", ".join(meta.tags) if meta.tags else "None"}
+├── Volume: {int(meta.volume * 100)}%
+├── Favorite: {"Yes ★" if meta.favorite else "No"}
+├── Play Count: {meta.play_count}
+└── Last Played: {last_played_str}"""
+
+    console.print(Panel(info_text, title=f"Sound Info: {sound_name}", border_style="cyan"))
+
+    if preview:
+        console.print("\n[dim]Playing preview...[/dim]")
+        soundboard.play_sound(sound_name, blocking=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Custom Hotkey Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.command()
+@click.argument("hotkey")
+@click.argument("sound_name")
+def bind(hotkey: str, sound_name: str) -> None:
+    """Bind a hotkey to a sound.
+
+    Hotkey format: <modifier>+<modifier>+<key>
+
+    Examples:
+        muc bind f1 airhorn
+        muc bind "<ctrl>+<shift>+a" applause
+        muc bind "<alt>+1" explosion
+
+    Supported modifiers: ctrl, alt, shift, cmd (Mac)
+    Supported keys: a-z, 0-9, f1-f12, space, etc.
+
+    """
+    soundboard, _ = get_soundboard()
+    hotkey_mgr = HotkeyManager()
+
+    if sound_name not in soundboard.sounds:
+        console.print(f"[red]✗[/red] Sound '{sound_name}' not found")
+        sys.exit(1)
+
+    # Normalize hotkey format
+    normalized = hotkey_mgr.normalize_hotkey(hotkey)
+
+    if not normalized:
+        console.print(f"[red]✗[/red] Invalid hotkey format: {hotkey}")
+        console.print("[dim]Use format like: f1, <ctrl>+a, <ctrl>+<shift>+1[/dim]")
+        sys.exit(1)
+
+    # Check for conflicts
+    existing = hotkey_mgr.get_binding(normalized)
+    if existing and existing != sound_name:
+        console.print(f"[yellow]⚠[/yellow] Hotkey {normalized} is bound to '{existing}'")
+        if not click.confirm("Override?"):
+            return
+
+    hotkey_mgr.bind(normalized, sound_name)
+    console.print(f"[green]✓[/green] Bound {normalized.upper()} → {sound_name}")
+
+
+@cli.command()
+@click.argument("hotkey_or_sound")
+def unbind(hotkey_or_sound: str) -> None:
+    """Unbind a hotkey or all hotkeys for a sound.
+
+    Examples:
+        muc unbind f1                    # Unbind F1 key
+        muc unbind airhorn               # Unbind all keys for 'airhorn'
+
+    """
+    soundboard, _ = get_soundboard()
+    hotkey_mgr = HotkeyManager()
+
+    # Check if it's a sound name
+    if hotkey_or_sound in soundboard.sounds:
+        count = hotkey_mgr.unbind_sound(hotkey_or_sound)
+        if count > 0:
+            console.print(f"[green]✓[/green] Unbound {count} hotkey(s) from '{hotkey_or_sound}'")
+        else:
+            console.print(f"[yellow]⚠[/yellow] No hotkeys bound to '{hotkey_or_sound}'")
+    else:
+        # Treat as hotkey
+        normalized = hotkey_mgr.normalize_hotkey(hotkey_or_sound)
+        if normalized and hotkey_mgr.unbind(normalized):
+            console.print(f"[green]✓[/green] Unbound {normalized.upper()}")
+        else:
+            console.print(f"[yellow]⚠[/yellow] No binding found for {hotkey_or_sound}")
+
+
+@cli.command(name="hotkeys-reset")
+def hotkeys_reset() -> None:
+    """Clear all custom hotkey bindings."""
+    hotkey_mgr = HotkeyManager()
+    count = hotkey_mgr.clear_all()
+    console.print(f"[green]✓[/green] Cleared {count} custom hotkey binding(s)")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Queue Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group()
+def queue() -> None:
+    """Manage the sound playback queue."""
+
+
+@queue.command(name="add")
+@click.argument("sound_names", nargs=-1, required=True)
+def queue_add(sound_names: tuple[str, ...]) -> None:
+    """Add sounds to the queue.
+
+    Example: muc queue add airhorn rickroll explosion
+    """
+    soundboard, _ = get_soundboard()
+    queue_mgr = QueueManager()
+
+    # Validate sound names
+    valid_sounds = []
+    for name in sound_names:
+        if name in soundboard.sounds:
+            valid_sounds.append(name)
+        else:
+            console.print(f"[yellow]⚠[/yellow] Sound '{name}' not found, skipping")
+
+    if valid_sounds:
+        queue_mgr.add(*valid_sounds)
+        console.print(f"[green]✓[/green] Added {len(valid_sounds)} sound(s) to queue")
+        console.print(f"[dim]Queue size: {queue_mgr.size()}[/dim]")
+    else:
+        console.print("[red]✗[/red] No valid sounds to add")
+
+
+@queue.command(name="show")
+def queue_show() -> None:
+    """Display the current queue."""
+    queue_mgr = QueueManager()
+    items = queue_mgr.peek()
+
+    if not items:
+        console.print("[yellow]⚠[/yellow] Queue is empty")
+        return
+
+    table = Table(title="Sound Queue", show_header=True, header_style="bold cyan")
+    table.add_column("#", style="dim", width=4, justify="right")
+    table.add_column("Sound Name", style="white")
+
+    for idx, name in enumerate(items, 1):
+        table.add_row(str(idx), name)
+
+    console.print(table)
+
+
+@queue.command(name="clear")
+def queue_clear() -> None:
+    """Clear the queue."""
+    queue_mgr = QueueManager()
+    count = queue_mgr.clear()
+    console.print(f"[green]✓[/green] Cleared {count} sound(s) from queue")
+
+
+@queue.command(name="play")
+def queue_play() -> None:
+    """Play all sounds in the queue sequentially."""
+    soundboard, _ = get_soundboard()
+    queue_mgr = QueueManager()
+
+    if queue_mgr.is_empty():
+        console.print("[yellow]⚠[/yellow] Queue is empty")
+        return
+
+    total = queue_mgr.size()
+    console.print(f"\n[bold cyan]Playing {total} sounds from queue...[/bold cyan]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+
+    try:
+        idx = 1
+        while True:
+            sound_name = queue_mgr.next()
+            if sound_name is None:
+                break
+            console.print(f"[cyan][{idx}/{total}][/cyan] ", end="")
+            soundboard.play_sound(sound_name, blocking=True)
+            idx += 1
+    except KeyboardInterrupt:
+        console.print("\n[yellow]⏸[/yellow] Queue playback interrupted.")
+        soundboard.stop_sound()
+
+
+@queue.command(name="skip")
+def queue_skip() -> None:
+    """Skip the next sound in the queue."""
+    queue_mgr = QueueManager()
+    skipped = queue_mgr.next()
+    if skipped:
+        console.print(f"[green]✓[/green] Skipped: {skipped}")
+        console.print(f"[dim]Remaining: {queue_mgr.size()}[/dim]")
+    else:
+        console.print("[yellow]⚠[/yellow] Queue is empty")
+
+
+@queue.command(name="shuffle")
+def queue_shuffle() -> None:
+    """Shuffle the queue."""
+    queue_mgr = QueueManager()
+    if queue_mgr.is_empty():
+        console.print("[yellow]⚠[/yellow] Queue is empty")
+        return
+    queue_mgr.shuffle()
+    console.print("[green]✓[/green] Queue shuffled")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Playlist Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group()
+def playlist() -> None:
+    """Manage saved playlists."""
+
+
+@playlist.command(name="save")
+@click.argument("name")
+def playlist_save(name: str) -> None:
+    """Save the current queue as a playlist.
+
+    Example: muc playlist save gaming
+    """
+    queue_mgr = QueueManager()
+    if queue_mgr.save_playlist(name):
+        console.print(f"[green]✓[/green] Saved playlist '{name}' ({queue_mgr.size()} sounds)")
+    else:
+        console.print("[red]✗[/red] Cannot save empty queue as playlist")
+
+
+@playlist.command(name="load")
+@click.argument("name")
+@click.option("--append", "-a", is_flag=True, help="Append to current queue instead of replacing")
+def playlist_load(name: str, append: bool) -> None:  # noqa: FBT001
+    """Load a playlist into the queue.
+
+    Example: muc playlist load gaming
+    """
+    queue_mgr = QueueManager()
+    if queue_mgr.load_playlist(name, append=append):
+        action = "Appended" if append else "Loaded"
+        console.print(f"[green]✓[/green] {action} playlist '{name}' ({queue_mgr.size()} sounds in queue)")
+    else:
+        console.print(f"[red]✗[/red] Playlist '{name}' not found")
+
+
+@playlist.command(name="list")
+def playlist_list() -> None:
+    """Show all saved playlists."""
+    queue_mgr = QueueManager()
+    playlists = queue_mgr.list_playlists()
+
+    if not playlists:
+        console.print("[yellow]⚠[/yellow] No playlists saved. Use 'muc playlist save <name>' to create one.")
+        return
+
+    table = Table(title="Saved Playlists", show_header=True, header_style="bold cyan")
+    table.add_column("Name", style="white")
+    table.add_column("Sounds", style="cyan", justify="right")
+
+    for name, count in sorted(playlists.items()):
+        table.add_row(name, str(count))
+
+    console.print(table)
+
+
+@playlist.command(name="delete")
+@click.argument("name")
+def playlist_delete(name: str) -> None:
+    """Delete a saved playlist.
+
+    Example: muc playlist delete gaming
+    """
+    queue_mgr = QueueManager()
+    if queue_mgr.delete_playlist(name):
+        console.print(f"[green]✓[/green] Deleted playlist '{name}'")
+    else:
+        console.print(f"[red]✗[/red] Playlist '{name}' not found")
+
+
+@playlist.command(name="show")
+@click.argument("name")
+def playlist_show(name: str) -> None:
+    """Show contents of a playlist.
+
+    Example: muc playlist show gaming
+    """
+    queue_mgr = QueueManager()
+    sounds = queue_mgr.get_playlist(name)
+
+    if sounds is None:
+        console.print(f"[red]✗[/red] Playlist '{name}' not found")
+        return
+
+    table = Table(title=f"Playlist: {name}", show_header=True, header_style="bold cyan")
+    table.add_column("#", style="dim", width=4, justify="right")
+    table.add_column("Sound Name", style="white")
+
+    for idx, sound_name in enumerate(sounds, 1):
+        table.add_row(str(idx), sound_name)
+
+    console.print(table)
 
 
 @cli.command()
 def listen() -> None:
-    """Start listening for hotkeys (F1-F10).
+    """Start listening for hotkeys.
 
     Activates the soundboard to respond to hotkey presses.
+    Uses both default (F1-F10) and custom hotkey bindings.
     Press ESC to stop listening.
     """
     soundboard, _ = get_soundboard()
@@ -186,7 +798,7 @@ def listen() -> None:
         console.print(f"[dim]Add audio files to: {soundboard.sounds_dir}[/dim]")
         sys.exit(1)
 
-    soundboard.setup_default_hotkeys()
+    soundboard.setup_hotkeys()
     soundboard.list_hotkeys()
 
     console.print("\n[bold green]Soundboard Active![/bold green]")

@@ -163,12 +163,13 @@ class AudioManager:
 
         return data
 
-    def play_audio(self, audio_file: Path, *, blocking: bool = False) -> bool:
+    def play_audio(self, audio_file: Path, *, blocking: bool = False, sound_volume: float = 1.0) -> bool:
         """Play an audio file through the selected output device.
 
         Args:
             audio_file: Path to the audio file
             blocking: If True, wait for playback to finish
+            sound_volume: Per-sound volume multiplier (0.0 to 2.0), combined with global volume
 
         Returns:
             True if playback started successfully, False otherwise.
@@ -220,8 +221,9 @@ class AudioManager:
             # Adjust channels if needed
             data = self._adjust_channels(data, max_channels)
 
-            # Apply volume scaling
-            data *= self.volume
+            # Apply combined volume scaling: global x sound-specific
+            final_volume = self.volume * sound_volume
+            data *= final_volume
 
             logger.debug(f"Starting playback to device {self.output_device_id}")
             sd.play(data, samplerate, device=self.output_device_id)

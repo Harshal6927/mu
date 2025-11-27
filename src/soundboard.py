@@ -9,7 +9,10 @@ from rich.console import Console
 from rich.table import Table
 
 from .audio_manager import AudioManager
+from .config import Config
+from .hotkey_manager import HotkeyManager
 from .logging_config import get_logger
+from .metadata import MetadataManager
 from .validators import SUPPORTED_FORMATS, validate_audio_file_safe
 
 logger = get_logger(__name__)
@@ -23,6 +26,8 @@ class Soundboard:
         audio_manager: AudioManager,
         sounds_dir: Path,
         console: Console | None = None,
+        metadata_manager: MetadataManager | None = None,
+        hotkey_manager: HotkeyManager | None = None,
     ) -> None:
         """Initialize the Soundboard.
 
@@ -30,11 +35,15 @@ class Soundboard:
             audio_manager: The audio manager instance for playback
             sounds_dir: Directory containing sound files
             console: Rich console for output (creates new if None)
+            metadata_manager: MetadataManager instance (creates new if None)
+            hotkey_manager: HotkeyManager instance (creates new if None)
 
         """
         self.audio_manager = audio_manager
         self.sounds_dir = Path(sounds_dir)
         self.console = console or Console()
+        self.metadata = metadata_manager or MetadataManager()
+        self.hotkey_manager = hotkey_manager or HotkeyManager()
         self.sounds: dict[str, Path] = {}
         self.hotkeys: dict[str, str] = {}
         self.listener: keyboard.GlobalHotKeys | None = None
@@ -103,6 +112,25 @@ class Soundboard:
         for idx, sound_name in enumerate(sound_names[:10]):
             self.hotkeys[function_keys[idx]] = sound_name
 
+    def setup_hotkeys(self, *, mode: str | None = None) -> None:
+        """Set up hotkeys based on configuration mode.
+
+        Args:
+            mode: Hotkey mode ("default", "custom", "merged"). Uses config if None.
+
+        """
+        config = Config()
+        mode = mode or config.hotkey_mode
+
+        if mode == "default":
+            self.setup_default_hotkeys()
+        elif mode == "custom":
+            self.hotkeys = self.hotkey_manager.get_all_bindings()
+        else:  # "merged"
+            self.setup_default_hotkeys()
+            # Custom hotkeys override defaults
+            self.hotkeys.update(self.hotkey_manager.get_all_bindings())
+
     def set_hotkey(self, key: str, sound_name: str) -> bool:
         """Bind a hotkey to a sound.
 
@@ -136,7 +164,11 @@ class Soundboard:
         def handler() -> None:
             audio_file = self.sounds.get(sound_name)
             if audio_file:
-                self.audio_manager.play_audio(audio_file)
+                # Get per-sound volume from metadata
+                meta = self.metadata.get_metadata(sound_name)
+                self.audio_manager.play_audio(audio_file, sound_volume=meta.volume)
+                # Record play
+                self.metadata.record_play(sound_name)
 
         return handler
 
@@ -186,7 +218,17 @@ class Soundboard:
         audio_file = self.sounds.get(sound_name)
         if audio_file:
             logger.debug(f"Playing sound: {sound_name}")
-            return self.audio_manager.play_audio(audio_file, blocking=blocking)
+            # Get per-sound volume from metadata
+            meta = self.metadata.get_metadata(sound_name)
+            result = self.audio_manager.play_audio(
+                audio_file,
+                blocking=blocking,
+                sound_volume=meta.volume,
+            )
+            if result:
+                # Record play
+                self.metadata.record_play(sound_name)
+            return result
         logger.warning(f"Sound not found: {sound_name}")
         self.console.print(f"[red]✗[/red] Sound '{sound_name}' not found.")
         return False
