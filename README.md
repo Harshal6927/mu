@@ -19,6 +19,9 @@ Play audio files through your microphone in multiplayer games like CS, Battlefie
 - 🔉 **Global volume** - Adjustable playback volume with persistent settings
 - 🎲 **Auto-play mode** - Play all sounds randomly or sequentially
 - ⚙️ **Persistent config** - Saves your settings to `~/.muc/config.json`
+- 👤 **Configuration profiles** - Create and switch between different setups for different games
+- 📤 **Config export/import** - Share configurations between machines or with friends
+- 📂 **Multiple sounds directories** - Scan sounds from multiple folders with override support
 - 🎮 **Gaming ready** - Perfect for CS, Battlefield, COD, and more!
 
 ## 📋 Prerequisites
@@ -150,6 +153,25 @@ muc playlist list            # List all saved playlists
 muc playlist show mylist     # Show playlist contents
 muc playlist delete mylist   # Delete a playlist
 
+# Configuration profiles
+muc profile list             # List all profiles
+muc profile show [name]      # Show profile details
+muc profile create <name>    # Create a new profile
+muc profile switch <name>    # Switch to a different profile
+muc profile delete <name>    # Delete a profile
+muc profile clone <src> <new> # Clone an existing profile
+
+# Config export/import
+muc config export <file>     # Export current profile to JSON
+muc config import <file>     # Import profile from JSON
+muc config export-all <file> # Export all profiles to ZIP archive
+
+# Multiple sounds directories
+muc dirs list                # List configured sounds directories
+muc dirs add <path>          # Add a sounds directory
+muc dirs remove <path>       # Remove a sounds directory
+muc dirs conflicts           # Show sounds with name conflicts
+
 # Interactive mode
 muc interactive    # Launch full interactive menu
 
@@ -271,29 +293,79 @@ yt-dlp -x --audio-format wav "https://youtube.com/watch?v=..."
 
 ## 🔧 Configuration
 
-Configuration is automatically saved to `~/.muc/config.json`:
+Configuration is stored in `~/.muc/` with support for multiple profiles:
 
+```
+~/.muc/
+├── config.json          # Global settings (active profile, default profile)
+├── profiles/
+│   ├── default.json     # Default profile
+│   ├── csgo.json        # Game-specific profile
+│   └── streaming.json   # Custom profile
+├── metadata.json        # Sound tags, favorites, volumes, play counts
+└── playlists.json       # Saved playlists
+```
+
+### Profile Settings
+
+Each profile contains:
 ```json
 {
-  "output_device_id": 6,
-  "sounds_dir": "C:/path/to/muc/sounds",
-  "volume": 1.0,
-  "hotkeys": {
-    "<f1>": "airhorn",
-    "<ctrl>+<shift>+a": "applause"
-  },
-  "hotkey_mode": "merged"
+  "name": "csgo",
+  "display_name": "CS:GO Competitive",
+  "description": "Settings for CS:GO matches",
+  "settings": {
+    "output_device_id": 6,
+    "sounds_dir": "C:/path/to/sounds",
+    "sounds_dirs": ["C:/sounds/main", "C:/sounds/memes"],
+    "volume": 0.8,
+    "hotkeys": {
+      "<f1>": "airhorn",
+      "<ctrl>+<shift>+a": "applause"
+    },
+    "hotkey_mode": "merged"
+  }
 }
 ```
 
-**Additional data files:**
-- `~/.muc/metadata.json` - Sound tags, favorites, volumes, play counts
-- `~/.muc/playlists.json` - Saved playlists
+### Profile Workflow
 
-You can manually edit these files or use CLI commands:
 ```bash
-muc setup
+# Create profiles for different games
+muc profile create "CS:GO" --description "Counter-Strike settings"
+muc profile create "Valorant" --copy-from csgo
+
+# Switch between profiles
+muc profile switch csgo
+muc profile switch valorant
+
+# Export/import for backup or sharing
+muc config export csgo-settings.json
+muc config import csgo-settings.json --name "imported-csgo"
+muc config export-all full-backup.zip
 ```
+
+### Multiple Sounds Directories
+
+You can configure multiple directories to scan for sounds:
+
+```bash
+# Add directories (later directories override earlier ones for same-named sounds)
+muc dirs add "C:/sounds/main"
+muc dirs add "C:/sounds/game-specific"
+muc dirs add "D:/shared-sounds"
+
+# View configured directories
+muc dirs list
+
+# Check for naming conflicts
+muc dirs conflicts
+```
+
+This is useful for:
+- Keeping a base sound library + game-specific overrides
+- Sharing sounds across multiple profiles
+- Organizing sounds by category in different folders
 
 ## 🎯 Gaming Tips
 
@@ -393,18 +465,19 @@ This project implements a clean software architecture:
 │            Rich-click commands (cli.py)             │
 └───────────────────────┬─────────────────────────────┘
                         │
-        ┌───────────────┼───────────────┐
-        │               │               │
-┌───────▼───────┐ ┌─────▼─────┐ ┌───────▼───────┐
-│    Config     │ │  Metadata │ │ Queue Manager │
-│  (settings)   │ │(tags,favs)│ │ (playlists)   │
-└───────┬───────┘ └─────┬─────┘ └───────┬───────┘
+        ┌───────────────┼───────────────┬─────────────┐
+        │               │               │             │
+┌───────▼───────┐ ┌─────▼─────┐ ┌───────▼───────┐ ┌───▼───────────┐
+│Profile Manager│ │  Metadata │ │ Queue Manager │ │Config Transfer│
+│  (profiles)   │ │(tags,favs)│ │ (playlists)   │ │(export/import)│
+└───────┬───────┘ └─────┬─────┘ └───────┬───────┘ └───────────────┘
         │               │               │
         └───────────────┼───────────────┘
                         │
 ┌───────────────────────▼─────────────────────────────┐
 │                   Soundboard                        │
 │     (sound library, hotkey manager, playback)       │
+│              + SoundsDirectoryManager               │
 └───────────────────────┬─────────────────────────────┘
                         │
 ┌───────────────────────▼─────────────────────────────┐
@@ -434,6 +507,9 @@ muc/
 │   ├── __init__.py          # Package initialization
 │   ├── cli.py               # Rich-click CLI commands
 │   ├── config.py            # Configuration management
+│   ├── profile_manager.py   # Configuration profiles
+│   ├── config_transfer.py   # Export/import configurations
+│   ├── sounds_directories.py # Multiple sounds directories
 │   ├── audio_manager.py     # Audio device & playback
 │   ├── soundboard.py        # Sound library & hotkeys
 │   ├── metadata.py          # Tags, favorites, per-sound volume

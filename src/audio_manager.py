@@ -111,7 +111,6 @@ class AudioManager:
         try:
             device_info = validate_device(device_id)
             self.output_device_id = device_id
-            logger.info(f"Output device set to: {device_info.name} (ID: {device_id})")
         except DeviceNotFoundError as e:
             logger.warning(f"Device not found: {e}")
             self.console.print(f"[red]✗[/red] {e.message}")
@@ -124,7 +123,7 @@ class AudioManager:
             return False
         else:
             self.console.print(
-                f"[green]✓[/green] Output device set to: [bold]{device_info.name}[/bold]",
+                f"Output device set to: [bold]{device_info.name} (ID: {device_id})[/bold]",
             )
             return True
 

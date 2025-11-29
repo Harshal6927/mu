@@ -52,6 +52,9 @@ lint.ignore = [
     "PLR0911",
     "PLR0914",
     "PLR0912",
+    "PLR0913",
+    "PLR0917",
+    "PLR0904",
 ]
 
 [tool.pytest.ini_options]

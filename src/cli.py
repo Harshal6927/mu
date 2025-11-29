@@ -14,14 +14,17 @@ from rich.table import Table
 
 from .audio_manager import AudioManager
 from .config import Config
+from .config_transfer import ConfigTransfer
 from .exceptions import MUCError
 from .hotkey_manager import HotkeyManager
 from .interactive_menu import InteractiveMenu
 from .logging_config import init_logging
 from .metadata import MetadataManager
+from .profile_manager import ProfileManager
 from .queue_manager import QueueManager
 from .search import search_sounds
 from .soundboard import Soundboard
+from .sounds_directories import SoundsDirectoryManager
 from .status_display import StatusDisplay
 from .validators import SUPPORTED_FORMATS, validate_audio_file, validate_audio_file_safe
 
@@ -39,29 +42,69 @@ console = Console()
 def get_soundboard() -> tuple[Soundboard, AudioManager]:
     """Initialize and return soundboard and audio manager instances.
 
+    Uses the active profile's settings for configuration.
+
     Returns:
         Tuple containing initialized Soundboard and AudioManager instances.
 
     """
-    config = Config()
-    audio_manager = AudioManager(console)
-    metadata_manager = MetadataManager()
-    hotkey_manager = HotkeyManager(config)
+    # Try to load from profile first, fallback to legacy config
+    try:
+        pm = ProfileManager()
+        profile = pm.get_active_profile()
 
-    if config.output_device_id is not None:
-        audio_manager.set_output_device(config.output_device_id)
+        audio_manager = AudioManager(console)
+        metadata_manager = MetadataManager()
 
-    # Set volume from config (silently, without printing)
-    audio_manager.volume = config.volume
+        if profile.output_device_id is not None:
+            audio_manager.set_output_device(profile.output_device_id)
 
-    soundboard = Soundboard(
-        audio_manager,
-        config.sounds_dir,
-        console,
-        metadata_manager=metadata_manager,
-        hotkey_manager=hotkey_manager,
-    )
-    return soundboard, audio_manager
+        # Set volume from profile (silently, without printing)
+        audio_manager.volume = profile.volume
+
+        # Get sounds directories from profile
+        sounds_dirs = profile.sounds_dirs
+        if sounds_dirs:
+            sounds_dirs_paths = [Path(d) for d in sounds_dirs]
+        elif profile.sounds_dir:
+            sounds_dirs_paths = [Path(profile.sounds_dir)]
+        else:
+            sounds_dirs_paths = [Path.cwd() / "sounds"]
+
+        # Create hotkey manager with legacy config for backward compatibility
+        config = Config()
+        hotkey_manager = HotkeyManager(config)
+
+        soundboard = Soundboard(
+            audio_manager,
+            console=console,
+            metadata_manager=metadata_manager,
+            hotkey_manager=hotkey_manager,
+            sounds_dirs=sounds_dirs_paths,
+        )
+        return soundboard, audio_manager  # noqa: TRY300
+
+    except Exception:  # noqa: BLE001
+        # Fallback to legacy config if profile system fails
+        config = Config()
+        audio_manager = AudioManager(console)
+        metadata_manager = MetadataManager()
+        hotkey_manager = HotkeyManager(config)
+
+        if config.output_device_id is not None:
+            audio_manager.set_output_device(config.output_device_id)
+
+        # Set volume from config (silently, without printing)
+        audio_manager.volume = config.volume
+
+        soundboard = Soundboard(
+            audio_manager,
+            config.sounds_dir,
+            console,
+            metadata_manager=metadata_manager,
+            hotkey_manager=hotkey_manager,
+        )
+        return soundboard, audio_manager
 
 
 @click.group(invoke_without_command=True)
@@ -1038,6 +1081,376 @@ def interactive() -> None:
     # Use the enhanced interactive menu
     menu = InteractiveMenu(console, soundboard, audio_manager)
     menu.run()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Profile Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group()
+def profile() -> None:
+    """Manage configuration profiles.
+
+    Profiles allow you to save different configurations for different
+    games or scenarios (e.g., CS2, Battlefield, streaming).
+    """
+
+
+@profile.command(name="list")
+def profile_list() -> None:
+    """List all profiles.
+
+    Shows all available profiles with their status and settings.
+    """
+    manager = ProfileManager()
+    profiles = manager.list_profiles()
+    active = manager.active_profile_name
+    default = manager.default_profile_name
+
+    table = Table(title="Configuration Profiles", show_header=True, header_style="bold cyan")
+    table.add_column("Name", style="white")
+    table.add_column("Display Name", style="dim")
+    table.add_column("Status", justify="center")
+    table.add_column("Device ID", justify="center")
+    table.add_column("Volume", justify="center")
+
+    for name in sorted(profiles):
+        p = manager.get_profile(name)
+        if not p:
+            continue
+
+        status = []
+        if name == active:
+            status.append("[green]ACTIVE[/green]")
+        if name == default:
+            status.append("[cyan]DEFAULT[/cyan]")
+        status_str = " ".join(status) if status else "-"
+
+        device_id = str(p.output_device_id) if p.output_device_id is not None else "-"
+        volume_pct = f"{int(p.volume * 100)}%"
+
+        table.add_row(name, p.display_name, status_str, device_id, volume_pct)
+
+    console.print(table)
+
+
+@profile.command(name="create")
+@click.argument("name")
+@click.option("--display", "-d", help="Display name for the profile")
+@click.option("--description", help="Profile description")
+@click.option("--copy", "-c", "copy_from", help="Copy settings from existing profile")
+def profile_create(name: str, display: str | None, description: str | None, copy_from: str | None) -> None:
+    """Create a new profile.
+
+    Examples:
+        muc profile create csgo
+        muc profile create streaming --display "Streaming Mode"
+        muc profile create bf2042 --copy csgo
+
+    """
+    manager = ProfileManager()
+
+    try:
+        p = manager.create_profile(
+            name=name,
+            display_name=display or "",
+            description=description or "",
+            copy_from=copy_from,
+        )
+        console.print(f"[green]✓[/green] Created profile: {p.display_name}")
+
+        if click.confirm("Switch to this profile now?"):
+            manager.switch_profile(name)
+            console.print(f"[green]✓[/green] Switched to profile: {name}")
+
+    except ValueError as e:
+        console.print(f"[red]✗[/red] {e}")
+        sys.exit(1)
+
+
+@profile.command(name="switch")
+@click.argument("name")
+def profile_switch(name: str) -> None:
+    """Switch to a different profile.
+
+    Example: muc profile switch csgo
+    """
+    manager = ProfileManager()
+    p = manager.switch_profile(name)
+
+    if p:
+        console.print(f"[green]✓[/green] Switched to profile: {p.display_name}")
+        console.print(f"[dim]Device: {p.output_device_id}, Volume: {int(p.volume * 100)}%[/dim]")
+    else:
+        console.print(f"[red]✗[/red] Profile '{name}' not found")
+        console.print("[dim]Use 'muc profile list' to see available profiles[/dim]")
+        sys.exit(1)
+
+
+@profile.command(name="delete")
+@click.argument("name")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation")
+def profile_delete(name: str, force: bool) -> None:  # noqa: FBT001
+    """Delete a profile.
+
+    Example: muc profile delete old-profile
+    """
+    manager = ProfileManager()
+
+    if not force and not click.confirm(f"Delete profile '{name}'?"):
+        return
+
+    try:
+        if manager.delete_profile(name):
+            console.print(f"[green]✓[/green] Deleted profile: {name}")
+        else:
+            console.print(f"[red]✗[/red] Profile '{name}' not found")
+            sys.exit(1)
+    except ValueError as e:
+        console.print(f"[red]✗[/red] {e}")
+        sys.exit(1)
+
+
+@profile.command(name="show")
+@click.argument("name", required=False)
+def profile_show(name: str | None) -> None:
+    """Show details of a profile.
+
+    If no name provided, shows the active profile.
+
+    Example: muc profile show csgo
+    """
+    manager = ProfileManager()
+
+    if name is None:
+        name = manager.active_profile_name
+
+    p = manager.get_profile(name)
+    if not p:
+        console.print(f"[red]✗[/red] Profile '{name}' not found")
+        sys.exit(1)
+
+    info = f"""[bold cyan]{p.display_name}[/bold cyan] ({p.name})
+
+[bold]Description:[/bold] {p.description or "None"}
+
+[bold]Settings:[/bold]
+├── Output Device ID: {p.output_device_id or "Not set"}
+├── Volume: {int(p.volume * 100)}%
+├── Sounds Directory: {p.sounds_dir or "Default"}
+├── Sounds Directories: {len(p.sounds_dirs)} configured
+└── Custom Hotkeys: {len(p.hotkeys)}
+
+[bold]Timestamps:[/bold]
+├── Created: {p.created_at.strftime("%Y-%m-%d %H:%M")}
+└── Updated: {p.updated_at.strftime("%Y-%m-%d %H:%M")}"""
+
+    console.print(Panel(info, title=f"Profile: {name}", border_style="cyan"))
+
+
+@profile.command(name="set-default")
+@click.argument("name")
+def profile_set_default(name: str) -> None:
+    """Set the default profile.
+
+    Example: muc profile set-default csgo
+    """
+    manager = ProfileManager()
+
+    if manager.set_default_profile(name):
+        console.print(f"[green]✓[/green] Set '{name}' as default profile")
+    else:
+        console.print(f"[red]✗[/red] Profile '{name}' not found")
+        sys.exit(1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Config Export/Import Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group(name="config")
+def config_group() -> None:
+    """Manage configuration settings.
+
+    Export and import configuration profiles to share with others or backup.
+    """
+
+
+@config_group.command(name="export")
+@click.argument("output", type=click.Path())
+@click.option("--profile", "-p", "profile_name", help="Profile to export (default: active)")
+@click.option("--all", "export_all", is_flag=True, help="Export all profiles")
+@click.option("--no-hotkeys", is_flag=True, help="Exclude hotkey bindings")
+def config_export(output: str, profile_name: str | None, export_all: bool, no_hotkeys: bool) -> None:  # noqa: FBT001
+    """Export configuration to a file.
+
+    Examples:
+        muc config export my-config.json
+        muc config export backup.zip --all
+        muc config export csgo.json --profile csgo
+
+    """
+    transfer = ConfigTransfer()
+    output_path = Path(output)
+
+    try:
+        if export_all:
+            result = transfer.export_all(output_path)
+            console.print(f"[green]✓[/green] Exported all profiles to: {result}")
+        else:
+            name = profile_name or transfer.profile_manager.active_profile_name
+            result = transfer.export_profile(
+                name,
+                output_path,
+                include_hotkeys=not no_hotkeys,
+            )
+            console.print(f"[green]✓[/green] Exported profile '{name}' to: {result}")
+    except ValueError as e:
+        console.print(f"[red]✗[/red] {e}")
+        sys.exit(1)
+
+
+@config_group.command(name="import")
+@click.argument("input_file", type=click.Path(exists=True))
+@click.option("--name", "-n", help="Import with different name")
+@click.option("--overwrite", is_flag=True, help="Overwrite existing profile")
+@click.option("--sounds-dir", type=click.Path(), help="Sounds directory to use")
+def config_import(input_file: str, name: str | None, overwrite: bool, sounds_dir: str | None) -> None:  # noqa: FBT001
+    """Import configuration from a file.
+
+    Examples:
+        muc config import my-config.json
+        muc config import friend-config.json --name friend-settings
+        muc config import backup.zip --overwrite
+
+    """
+    transfer = ConfigTransfer()
+    input_path = Path(input_file)
+
+    try:
+        if input_path.suffix == ".zip":
+            imported = transfer.import_all(input_path, overwrite=overwrite)
+            console.print(f"[green]✓[/green] Imported {len(imported)} profiles: {', '.join(imported)}")
+        else:
+            p = transfer.import_profile(
+                input_path,
+                new_name=name,
+                overwrite=overwrite,
+                sounds_dir=Path(sounds_dir) if sounds_dir else None,
+            )
+            console.print(f"[green]✓[/green] Imported profile: {p.display_name}")
+    except ValueError as e:
+        console.print(f"[red]✗[/red] {e}")
+        sys.exit(1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sounds Directories Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group(name="dirs")
+def directories() -> None:
+    """Manage sounds directories.
+
+    Configure multiple directories to load sounds from.
+    Sounds from later directories override earlier ones with the same name.
+    """
+
+
+@directories.command(name="list")
+def dirs_list() -> None:
+    """List all configured sounds directories."""
+    pm = ProfileManager()
+    p = pm.get_active_profile()
+
+    dirs = p.sounds_dirs
+    if not dirs and p.sounds_dir:
+        dirs = [p.sounds_dir]
+
+    manager = SoundsDirectoryManager([Path(d) for d in dirs])
+    manager.list_directories(console)
+
+
+@directories.command(name="add")
+@click.argument("path", type=click.Path())
+def dirs_add(path: str) -> None:
+    """Add a sounds directory.
+
+    Example: muc dirs add ~/more-sounds
+    """
+    pm = ProfileManager()
+    p = pm.get_active_profile()
+
+    path_obj = Path(path).resolve()
+
+    dirs = list(p.sounds_dirs)
+    if not dirs and p.sounds_dir:
+        dirs = [p.sounds_dir]
+
+    if str(path_obj) in dirs:
+        console.print(f"[yellow]⚠[/yellow] Directory already configured: {path_obj}")
+        return
+
+    if not path_obj.exists():
+        if click.confirm("Directory doesn't exist. Create it?"):
+            path_obj.mkdir(parents=True, exist_ok=True)
+        else:
+            return
+
+    dirs.append(str(path_obj))
+    p.sounds_dirs = dirs
+    pm.save_profile(p)
+
+    console.print(f"[green]✓[/green] Added directory: {path_obj}")
+
+
+@directories.command(name="remove")
+@click.argument("path", type=click.Path())
+def dirs_remove(path: str) -> None:
+    """Remove a sounds directory.
+
+    Example: muc dirs remove ~/old-sounds
+    """
+    pm = ProfileManager()
+    p = pm.get_active_profile()
+
+    path_obj = Path(path).resolve()
+
+    dirs = list(p.sounds_dirs)
+    if not dirs:
+        console.print("[yellow]⚠[/yellow] No directories configured")
+        return
+
+    if str(path_obj) not in dirs:
+        console.print(f"[yellow]⚠[/yellow] Directory not configured: {path_obj}")
+        return
+
+    dirs.remove(str(path_obj))
+    p.sounds_dirs = dirs
+    pm.save_profile(p)
+
+    console.print(f"[green]✓[/green] Removed directory: {path_obj}")
+
+
+@directories.command(name="conflicts")
+def dirs_conflicts() -> None:
+    """Show sound name conflicts across directories.
+
+    When the same sound name exists in multiple directories,
+    the sound from the last directory in the list is used.
+    """
+    pm = ProfileManager()
+    p = pm.get_active_profile()
+
+    dirs = p.sounds_dirs
+    if not dirs and p.sounds_dir:
+        dirs = [p.sounds_dir]
+
+    manager = SoundsDirectoryManager([Path(d) for d in dirs])
+    manager.show_conflicts(console)
 
 
 def main() -> None:
