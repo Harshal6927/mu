@@ -21,12 +21,12 @@ Play audio files through your microphone in multiplayer games like CS, Battlefie
 - 📥 **YouTube download** - Download audio directly from YouTube with yt-dlp
 - ✂️ **Audio trimming** - Trim sounds with optional fade in/out
 - 🔊 **Audio normalization** - Normalize levels for consistent volume
-- ⚙️ **Persistent config** - Saves your settings to `~/.muc/config.json`
+- ⚙️ **Persistent config** - Saves your settings to `~/.muc/`
 - 👤 **Configuration profiles** - Create and switch between different setups for different games
 - 📤 **Config export/import** - Share configurations between machines or with friends
 - 📂 **Multiple sounds directories** - Scan sounds from multiple folders with override support
-- ⚡ **Performance optimized** - LRU audio cache for instant playback, lazy loading for fast startup
-- 🧠 **Memory management** - Configurable cache size with automatic eviction
+- ⚡ **Performance optimized** - LRU audio cache for instant playback
+- 🧠 **Configurable cache** - Adjustable cache size with automatic LRU eviction
 - 🎮 **Gaming ready** - Perfect for CS, Battlefield, COD, and more!
 
 ## 📋 Prerequisites
@@ -88,7 +88,7 @@ The setup wizard will:
 1. 📋 List all available audio devices in a beautiful table
 2. 🔍 Auto-detect VB-Cable or similar virtual devices
 3. ✓ Let you confirm or manually select the output device
-4. 💾 Save your configuration to `~/.muc/config.json`
+4. 💾 Save your configuration to your active profile
 
 **IMPORTANT**: Select `CABLE Input` as the output device, not `CABLE Output`.
 
@@ -164,7 +164,7 @@ muc profile show [name]      # Show profile details
 muc profile create <name>    # Create a new profile
 muc profile switch <name>    # Switch to a different profile
 muc profile delete <name>    # Delete a profile
-muc profile clone <src> <new> # Clone an existing profile
+muc profile set-default <name>  # Set default profile
 
 # Config export/import
 muc config export <file>     # Export current profile to JSON
@@ -194,11 +194,6 @@ muc cache preload --all      # Pre-load all sounds
 muc cache enable             # Enable audio caching
 muc cache disable            # Disable audio caching
 muc cache size 200           # Set max cache size to 200 MB
-
-# Memory management
-muc memory stats             # Show memory usage statistics
-muc memory cleanup           # Force garbage collection
-muc memory cleanup --aggressive  # Also clear cache
 
 # Interactive mode
 muc interactive    # Launch full interactive menu
@@ -389,28 +384,9 @@ muc cache size 200
 
 **Cache benefits:**
 - **First playback**: ~100ms (loads from disk)
-- **Cached playback**: <20ms (from memory)
+- **Cached playback**: <20ms (from cache)
 - **Hit rate**: Typically >80% for repeated sounds
-
-### Memory Management
-
-Monitor and control memory usage:
-
-```bash
-# Check memory statistics
-muc memory stats
-
-# Free unused memory
-muc memory cleanup
-
-# Aggressive cleanup (also clears cache)
-muc memory cleanup --aggressive
-```
-
-**Memory limits:**
-- Default cache: 100 MB
-- LRU eviction: Least recently used sounds are automatically removed
-- Configurable: Adjust based on your system's RAM
+- **LRU eviction**: Least recently used sounds are automatically removed when cache is full
 
 ## 🔧 Configuration
 
@@ -418,7 +394,7 @@ Configuration is stored in `~/.muc/` with support for multiple profiles:
 
 ```
 ~/.muc/
-├── config.json          # Global settings (active profile, default profile)
+├── state.json           # Global state (active profile, default profile)
 ├── profiles/
 │   ├── default.json     # Default profile
 │   ├── csgo.json        # Game-specific profile
@@ -613,11 +589,11 @@ This project implements a clean software architecture:
 ```
 
 **Flow**:
-1. User runs command → CLI parses → Config loads settings
+1. User runs command → CLI parses → Profile loads settings
 2. Soundboard scans sounds → Loads metadata (tags, volumes)
 3. HotkeyManager sets up bindings (default + custom)
 4. User presses hotkey → Handler triggered → Metadata volume applied
-5. Audio Manager loads file → Outputs to virtual device
+5. Audio Manager loads file (cached via LRU) → Outputs to virtual device
 6. Game reads from virtual device → Teammates hear sound
 
 ## 📁 Project Structure
@@ -627,15 +603,20 @@ muc/
 ├── src/
 │   ├── __init__.py          # Package initialization
 │   ├── cli.py               # Rich-click CLI commands
-│   ├── config.py            # Configuration management
 │   ├── profile_manager.py   # Configuration profiles
 │   ├── config_transfer.py   # Export/import configurations
 │   ├── sounds_directories.py # Multiple sounds directories
 │   ├── audio_manager.py     # Audio device & playback
+│   ├── cache.py             # LRU audio cache
 │   ├── soundboard.py        # Sound library & hotkeys
 │   ├── metadata.py          # Tags, favorites, per-sound volume
 │   ├── hotkey_manager.py    # Custom hotkey bindings
 │   ├── queue_manager.py     # Queue & playlist management
+│   ├── audio_tools.py       # Audio trimming & normalization
+│   ├── downloader.py        # YouTube download support
+│   ├── search.py            # Fuzzy search
+│   ├── interactive_menu.py  # Interactive TUI menu
+│   ├── status_display.py    # Live status display
 │   ├── validators.py        # Input validation
 │   ├── exceptions.py        # Custom exceptions
 │   └── logging_config.py    # Logging setup

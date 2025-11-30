@@ -23,23 +23,6 @@ def cli_runner() -> CliRunner:
 
 
 @pytest.fixture
-def mock_config(temp_sounds_dir: Path) -> MagicMock:
-    """Create a mock Config object.
-
-    Returns:
-        MagicMock: A mock Config object with default attributes.
-
-    """
-    mock = MagicMock()
-    mock.volume = 1.0
-    mock.output_device_id = None
-    mock.sounds_dir = temp_sounds_dir
-    mock.hotkeys = {}
-    mock.hotkey_mode = "merged"
-    return mock
-
-
-@pytest.fixture
 def mock_profile_manager(temp_sounds_dir: Path) -> MagicMock:
     """Create a mock ProfileManager object.
 
@@ -103,17 +86,14 @@ class TestCLIVolume:
     def test_volume_display(
         self,
         cli_runner: CliRunner,
-        mock_config: MagicMock,
         mock_profile_manager: MagicMock,
         mock_sounddevice: MagicMock,
     ) -> None:
         """Should display current volume."""
-        mock_config.volume = 0.75
-        # Update profile to have same volume
-        mock_profile_manager.get_active_profile.return_value.settings["volume"] = 0.75
+        # Update profile to have specific volume
+        mock_profile_manager.get_active_profile.return_value.volume = 0.75
 
         with (
-            patch("src.cli.Config", return_value=mock_config),
             patch("src.cli.ProfileManager", return_value=mock_profile_manager),
             patch("src.audio_manager.sd", mock_sounddevice),
         ):
@@ -125,31 +105,27 @@ class TestCLIVolume:
     def test_volume_set(
         self,
         cli_runner: CliRunner,
-        mock_config: MagicMock,
         mock_profile_manager: MagicMock,
         mock_sounddevice: MagicMock,
     ) -> None:
         """Should set volume level."""
         with (
-            patch("src.cli.Config", return_value=mock_config),
             patch("src.cli.ProfileManager", return_value=mock_profile_manager),
             patch("src.audio_manager.sd", mock_sounddevice),
         ):
             result = cli_runner.invoke(cli, ["volume", "0.5"])
 
         assert result.exit_code == 0
-        mock_config.save.assert_called_once()
+        mock_profile_manager.save_profile.assert_called_once()
 
     def test_volume_invalid_range(
         self,
         cli_runner: CliRunner,
-        mock_config: MagicMock,
         mock_profile_manager: MagicMock,
         mock_sounddevice: MagicMock,
     ) -> None:
         """Should reject volume outside valid range."""
         with (
-            patch("src.cli.Config", return_value=mock_config),
             patch("src.cli.ProfileManager", return_value=mock_profile_manager),
             patch("src.audio_manager.sd", mock_sounddevice),
         ):
@@ -165,13 +141,11 @@ class TestCLISounds:
     def test_sounds_lists_files(
         self,
         cli_runner: CliRunner,
-        mock_config: MagicMock,
         mock_profile_manager: MagicMock,
         mock_sounddevice: MagicMock,
     ) -> None:
         """Should list available sounds."""
         with (
-            patch("src.cli.Config", return_value=mock_config),
             patch("src.cli.ProfileManager", return_value=mock_profile_manager),
             patch("src.audio_manager.sd", mock_sounddevice),
         ):
@@ -190,13 +164,6 @@ class TestCLISounds:
         empty_dir = temp_dir / "empty_sounds"
         empty_dir.mkdir()
 
-        mock_cfg = MagicMock()
-        mock_cfg.volume = 1.0
-        mock_cfg.output_device_id = None
-        mock_cfg.sounds_dir = empty_dir
-        mock_cfg.hotkeys = {}
-        mock_cfg.hotkey_mode = "merged"
-
         mock_pm = MagicMock()
         profile = Profile(
             name="default",
@@ -210,7 +177,6 @@ class TestCLISounds:
         mock_pm.get_active_profile.return_value = profile
 
         with (
-            patch("src.cli.Config", return_value=mock_cfg),
             patch("src.cli.ProfileManager", return_value=mock_pm),
             patch("src.audio_manager.sd", mock_sounddevice),
         ):
@@ -226,13 +192,11 @@ class TestCLIHotkeys:
     def test_hotkeys_displays_bindings(
         self,
         cli_runner: CliRunner,
-        mock_config: MagicMock,
         mock_profile_manager: MagicMock,
         mock_sounddevice: MagicMock,
     ) -> None:
         """Should display hotkey bindings."""
         with (
-            patch("src.cli.Config", return_value=mock_config),
             patch("src.cli.ProfileManager", return_value=mock_profile_manager),
             patch("src.audio_manager.sd", mock_sounddevice),
         ):
@@ -249,17 +213,14 @@ class TestCLIPlay:
     def test_play_with_sound_name(
         self,
         cli_runner: CliRunner,
-        mock_config: MagicMock,
         mock_profile_manager: MagicMock,
         mock_sounddevice: MagicMock,
         mock_soundfile: MagicMock,
     ) -> None:
         """Should play specified sound."""
-        mock_config.output_device_id = 0
-        mock_profile_manager.get_active_profile.return_value.settings["output_device_id"] = 0
+        mock_profile_manager.get_active_profile.return_value.output_device_id = 0
 
         with (
-            patch("src.cli.Config", return_value=mock_config),
             patch("src.cli.ProfileManager", return_value=mock_profile_manager),
             patch("src.audio_manager.sd", mock_sounddevice),
             patch("src.audio_manager.sf", mock_soundfile),
@@ -271,15 +232,13 @@ class TestCLIPlay:
     def test_play_without_output_device(
         self,
         cli_runner: CliRunner,
-        mock_config: MagicMock,
         mock_profile_manager: MagicMock,
         mock_sounddevice: MagicMock,
     ) -> None:
         """Should warn when no output device is set."""
-        mock_config.output_device_id = None
+        mock_profile_manager.get_active_profile.return_value.output_device_id = None
 
         with (
-            patch("src.cli.Config", return_value=mock_config),
             patch("src.cli.ProfileManager", return_value=mock_profile_manager),
             patch("src.audio_manager.sd", mock_sounddevice),
         ):
@@ -291,16 +250,13 @@ class TestCLIPlay:
     def test_play_nonexistent_sound(
         self,
         cli_runner: CliRunner,
-        mock_config: MagicMock,
         mock_profile_manager: MagicMock,
         mock_sounddevice: MagicMock,
     ) -> None:
         """Should handle non-existent sound gracefully."""
-        mock_config.output_device_id = 0
-        mock_profile_manager.get_active_profile.return_value.settings["output_device_id"] = 0
+        mock_profile_manager.get_active_profile.return_value.output_device_id = 0
 
         with (
-            patch("src.cli.Config", return_value=mock_config),
             patch("src.cli.ProfileManager", return_value=mock_profile_manager),
             patch("src.audio_manager.sd", mock_sounddevice),
         ):
@@ -315,13 +271,11 @@ class TestCLIStop:
     def test_stop_command(
         self,
         cli_runner: CliRunner,
-        mock_config: MagicMock,
         mock_profile_manager: MagicMock,
         mock_sounddevice: MagicMock,
     ) -> None:
         """Should stop currently playing sound."""
         with (
-            patch("src.cli.Config", return_value=mock_config),
             patch("src.cli.ProfileManager", return_value=mock_profile_manager),
             patch("src.audio_manager.sd", mock_sounddevice),
         ):
@@ -334,13 +288,15 @@ class TestCLIStop:
 class TestCLISetup:
     """Tests for 'muc setup' command."""
 
-    def test_setup_finds_virtual_cable(self, cli_runner: CliRunner, mock_sounddevice: MagicMock) -> None:
+    def test_setup_finds_virtual_cable(
+        self,
+        cli_runner: CliRunner,
+        mock_profile_manager: MagicMock,
+        mock_sounddevice: MagicMock,
+    ) -> None:
         """Should find and suggest virtual cable during setup."""
-        mock_config = MagicMock()
-        mock_config.output_device_id = None
-
         with (
-            patch("src.cli.Config", return_value=mock_config),
+            patch("src.cli.ProfileManager", return_value=mock_profile_manager),
             patch("src.audio_manager.sd", mock_sounddevice),
         ):
             # Answer 'yes' to use detected device
@@ -358,13 +314,6 @@ class TestCLIAuto:
         empty_dir = temp_dir / "empty"
         empty_dir.mkdir()
 
-        mock_cfg = MagicMock()
-        mock_cfg.volume = 1.0
-        mock_cfg.output_device_id = 0
-        mock_cfg.sounds_dir = empty_dir
-        mock_cfg.hotkeys = {}
-        mock_cfg.hotkey_mode = "merged"
-
         mock_pm = MagicMock()
         profile = Profile(
             name="default",
@@ -378,7 +327,6 @@ class TestCLIAuto:
         mock_pm.get_active_profile.return_value = profile
 
         with (
-            patch("src.cli.Config", return_value=mock_cfg),
             patch("src.cli.ProfileManager", return_value=mock_pm),
             patch("src.audio_manager.sd", mock_sounddevice),
         ):

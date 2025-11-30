@@ -11,12 +11,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from .audio_manager import AudioManager
-from .config import Config
-from .logging_config import get_logger
-from .metadata import MetadataManager
-from .search import SearchResult, search_sounds
-from .soundboard import Soundboard
+from src.audio_manager import AudioManager
+from src.logging_config import get_logger
+from src.metadata import MetadataManager
+from src.profile_manager import ProfileManager
+from src.search import SearchResult, search_sounds
+from src.soundboard import Soundboard
 
 logger = get_logger(__name__)
 
@@ -303,9 +303,10 @@ class InteractiveMenu:
         self.audio_manager.print_devices()
         device_id = click.prompt("Enter device ID", type=int)
         if self.audio_manager.set_output_device(device_id):
-            config = Config()
-            config.output_device_id = device_id
-            config.save()
+            pm = ProfileManager()
+            profile = pm.get_active_profile()
+            profile.output_device_id = device_id
+            pm.save_profile(profile)
 
     def _adjust_volume(self) -> None:
         """Adjust the playback volume."""
@@ -316,9 +317,10 @@ class InteractiveMenu:
             type=click.IntRange(0, 100),
         )
         self.audio_manager.set_volume(volume_input / 100.0)
-        config = Config()
-        config.volume = self.audio_manager.volume
-        config.save()
+        pm = ProfileManager()
+        profile = pm.get_active_profile()
+        profile.volume = self.audio_manager.volume
+        pm.save_profile(profile)
 
     def _auto_play(self) -> None:
         """Auto-play all sounds."""

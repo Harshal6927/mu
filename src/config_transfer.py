@@ -7,8 +7,8 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .logging_config import get_logger
-from .profile_manager import Profile, ProfileManager
+from src.logging_config import get_logger
+from src.profile_manager import Profile, ProfileManager
 
 logger = get_logger(__name__)
 
@@ -239,74 +239,6 @@ class ConfigTransfer:
 
         logger.info(f"Imported {len(imported)} profiles")
         return imported
-
-    def export_to_clipboard(self, profile_name: str) -> str:
-        """Export a profile to JSON string (for clipboard).
-
-        Args:
-            profile_name: Name of profile to export
-
-        Returns:
-            JSON string representation
-
-        Raises:
-            ValueError: If profile not found
-
-        """
-        profile = self.profile_manager.get_profile(profile_name)
-        if not profile:
-            raise ValueError(f"Profile '{profile_name}' not found")
-
-        export_data = {
-            "_export_version": self.EXPORT_VERSION,
-            "_exported_at": datetime.now(tz=UTC).isoformat(),
-            "profile": profile.to_dict(),
-        }
-
-        return json.dumps(export_data, indent=2)
-
-    def import_from_string(
-        self,
-        json_string: str,
-        new_name: str | None = None,
-        *,
-        overwrite: bool = False,
-    ) -> Profile:
-        """Import a profile from JSON string.
-
-        Args:
-            json_string: JSON string containing profile data
-            new_name: Optional new name for the profile
-            overwrite: Whether to overwrite existing profile
-
-        Returns:
-            The imported Profile
-
-        Raises:
-            ValueError: If export version incompatible or profile exists without overwrite
-
-        """
-        data = json.loads(json_string)
-
-        # Validate export version
-        version = data.get("_export_version", 0)
-        if version > self.EXPORT_VERSION:
-            raise ValueError(f"Export version {version} is newer than supported ({self.EXPORT_VERSION})")
-
-        profile_data = data.get("profile", {})
-
-        if new_name:
-            profile_data["name"] = new_name.lower().replace(" ", "_")
-
-        name = profile_data.get("name", "imported")
-        if self.profile_manager.get_profile(name) and not overwrite:
-            raise ValueError(f"Profile '{name}' already exists. Use overwrite=True to replace.")
-
-        profile = Profile.from_dict(profile_data)
-        self.profile_manager.save_profile(profile)
-
-        logger.info(f"Imported profile from string: {profile.name}")
-        return profile
 
     @staticmethod
     def _get_platform() -> str:

@@ -1,10 +1,12 @@
 # Copyright (c) 2025. All rights reserved.
 """Custom hotkey management for MUC Soundboard."""
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
-from .config import Config
-from .logging_config import get_logger
+from src.logging_config import get_logger
+
+if TYPE_CHECKING:
+    from .profile_manager import ProfileManager
 
 logger = get_logger(__name__)
 
@@ -56,27 +58,34 @@ class HotkeyManager:
         "numpad9": "<num_9>",
     }
 
-    def __init__(self, config: Config | None = None) -> None:
+    def __init__(self, profile_manager: "ProfileManager | None" = None) -> None:
         """Initialize HotkeyManager.
 
         Args:
-            config: Config instance (creates new if None)
+            profile_manager: ProfileManager instance (creates new if None)
 
         """
-        self.config = config or Config()
+        if profile_manager is None:
+            from .profile_manager import ProfileManager
+
+            profile_manager = ProfileManager()
+        self.profile_manager = profile_manager
         self.bindings: dict[str, str] = {}
         self._load_bindings()
 
     def _load_bindings(self) -> None:
-        """Load bindings from config."""
-        self.bindings = getattr(self.config, "hotkeys", {}).copy()
+        """Load bindings from profile."""
+        profile = self.profile_manager.get_active_profile()
+        self.bindings = profile.hotkeys.copy() if profile else {}
         logger.debug(f"Loaded {len(self.bindings)} custom hotkey bindings")
 
     def _save_bindings(self) -> None:
-        """Save bindings to config."""
-        self.config.hotkeys = self.bindings.copy()
-        self.config.save()
-        logger.debug("Saved hotkey bindings to config")
+        """Save bindings to profile."""
+        profile = self.profile_manager.get_active_profile()
+        if profile:
+            profile.hotkeys = self.bindings.copy()
+            self.profile_manager.save_profile(profile)
+        logger.debug("Saved hotkey bindings to profile")
 
     def normalize_hotkey(self, hotkey: str) -> str | None:
         """Normalize hotkey string to pynput format.

@@ -13,24 +13,22 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
-from .audio_manager import AudioManager
-from .audio_tools import AudioNormalizer, AudioTrimmer
-from .config import Config
-from .config_transfer import ConfigTransfer
-from .downloader import YouTubeDownloader, check_ffmpeg_available, check_yt_dlp_available
-from .exceptions import MUCError
-from .hotkey_manager import HotkeyManager
-from .interactive_menu import InteractiveMenu
-from .logging_config import init_logging
-from .memory import MemoryMonitor
-from .metadata import MetadataManager
-from .profile_manager import ProfileManager
-from .queue_manager import QueueManager
-from .search import search_sounds
-from .soundboard import Soundboard
-from .sounds_directories import SoundsDirectoryManager
-from .status_display import StatusDisplay
-from .validators import SUPPORTED_FORMATS, validate_audio_file, validate_audio_file_safe
+from src.audio_manager import AudioManager
+from src.audio_tools import AudioNormalizer, AudioTrimmer
+from src.config_transfer import ConfigTransfer
+from src.downloader import YouTubeDownloader, check_ffmpeg_available, check_yt_dlp_available
+from src.exceptions import MUCError
+from src.hotkey_manager import HotkeyManager
+from src.interactive_menu import InteractiveMenu
+from src.logging_config import init_logging
+from src.metadata import MetadataManager
+from src.profile_manager import ProfileManager
+from src.queue_manager import QueueManager
+from src.search import search_sounds
+from src.soundboard import Soundboard
+from src.sounds_directories import SoundsDirectoryManager
+from src.status_display import StatusDisplay
+from src.validators import validate_audio_file
 
 # Configure rich-click
 click.rich_click.TEXT_MARKUP = "rich"
@@ -52,63 +50,38 @@ def get_soundboard() -> tuple[Soundboard, AudioManager]:
         Tuple containing initialized Soundboard and AudioManager instances.
 
     """
-    # Try to load from profile first, fallback to legacy config
-    try:
-        pm = ProfileManager()
-        profile = pm.get_active_profile()
+    pm = ProfileManager()
+    profile = pm.get_active_profile()
 
-        audio_manager = AudioManager(console)
-        metadata_manager = MetadataManager()
+    audio_manager = AudioManager(console)
+    metadata_manager = MetadataManager()
 
-        if profile.output_device_id is not None:
-            audio_manager.set_output_device(profile.output_device_id)
+    if profile.output_device_id is not None:
+        audio_manager.set_output_device(profile.output_device_id)
 
-        # Set volume from profile (silently, without printing)
-        audio_manager.volume = profile.volume
+    # Set volume from profile (silently, without printing)
+    audio_manager.volume = profile.volume
 
-        # Get sounds directories from profile
-        sounds_dirs = profile.sounds_dirs
-        if sounds_dirs:
-            sounds_dirs_paths = [Path(d) for d in sounds_dirs]
-        elif profile.sounds_dir:
-            sounds_dirs_paths = [Path(profile.sounds_dir)]
-        else:
-            sounds_dirs_paths = [Path.cwd() / "sounds"]
+    # Get sounds directories from profile
+    sounds_dirs = profile.sounds_dirs
+    if sounds_dirs:
+        sounds_dirs_paths = [Path(d) for d in sounds_dirs]
+    elif profile.sounds_dir:
+        sounds_dirs_paths = [Path(profile.sounds_dir)]
+    else:
+        sounds_dirs_paths = [Path.cwd() / "sounds"]
 
-        # Create hotkey manager with legacy config for backward compatibility
-        config = Config()
-        hotkey_manager = HotkeyManager(config)
+    # Create hotkey manager with profile manager
+    hotkey_manager = HotkeyManager(pm)
 
-        soundboard = Soundboard(
-            audio_manager,
-            console=console,
-            metadata_manager=metadata_manager,
-            hotkey_manager=hotkey_manager,
-            sounds_dirs=sounds_dirs_paths,
-        )
-        return soundboard, audio_manager  # noqa: TRY300
-
-    except Exception:  # noqa: BLE001
-        # Fallback to legacy config if profile system fails
-        config = Config()
-        audio_manager = AudioManager(console)
-        metadata_manager = MetadataManager()
-        hotkey_manager = HotkeyManager(config)
-
-        if config.output_device_id is not None:
-            audio_manager.set_output_device(config.output_device_id)
-
-        # Set volume from config (silently, without printing)
-        audio_manager.volume = config.volume
-
-        soundboard = Soundboard(
-            audio_manager,
-            config.sounds_dir,
-            console,
-            metadata_manager=metadata_manager,
-            hotkey_manager=hotkey_manager,
-        )
-        return soundboard, audio_manager
+    soundboard = Soundboard(
+        audio_manager,
+        console=console,
+        metadata_manager=metadata_manager,
+        hotkey_manager=hotkey_manager,
+        sounds_dirs=sounds_dirs_paths,
+    )
+    return soundboard, audio_manager
 
 
 @click.group(invoke_without_command=True)
@@ -146,7 +119,8 @@ def setup() -> None:
     Guides you through selecting a virtual audio device (like VB-Cable)
     to route sound to your microphone in games.
     """
-    config = Config()
+    pm = ProfileManager()
+    profile = pm.get_active_profile()
     audio_manager = AudioManager(console)
 
     console.print("\n[bold cyan]═══ Setup Wizard ═══[/bold cyan]\n")
@@ -162,8 +136,8 @@ def setup() -> None:
         )
         if click.confirm("Use this device?", default=True):
             audio_manager.set_output_device(virtual_cable)
-            config.output_device_id = virtual_cable
-            config.save()
+            profile.output_device_id = virtual_cable
+            pm.save_profile(profile)
             console.print("[green]✓[/green] Configuration saved!")
             return
     else:
@@ -174,8 +148,8 @@ def setup() -> None:
     # Manual selection
     device_id = click.prompt("Enter the device ID to use as output", type=int)
     if audio_manager.set_output_device(device_id):
-        config.output_device_id = device_id
-        config.save()
+        profile.output_device_id = device_id
+        pm.save_profile(profile)
         console.print("[green]✓[/green] Configuration saved!")
     else:
         console.print("[red]✗[/red] Invalid device selection.")
@@ -929,51 +903,6 @@ def stop() -> None:
 
 
 @cli.command()
-def validate() -> None:
-    """Validate all audio files in your library.
-
-    Checks each audio file for corruption or format issues.
-    """
-    config = Config()
-    sounds_dir = config.sounds_dir
-
-    if not sounds_dir.exists():
-        console.print(f"[red]✗[/red] Sounds directory not found: {sounds_dir}")
-        sys.exit(1)
-
-    audio_files = [f for f in sounds_dir.rglob("*") if f.suffix.lower() in SUPPORTED_FORMATS]
-
-    if not audio_files:
-        console.print("[yellow]⚠[/yellow] No audio files found to validate")
-        return
-
-    console.print(f"\n[cyan]Validating {len(audio_files)} audio files...[/cyan]\n")
-
-    valid_count = 0
-    invalid_files: list[tuple[str, str]] = []
-
-    for audio_file in sorted(audio_files):
-        info = validate_audio_file_safe(audio_file)
-
-        if info.is_valid:
-            console.print(
-                f"[green]✓[/green] {audio_file.name} "
-                f"[dim]({info.duration:.1f}s, {info.sample_rate}Hz, {info.channels}ch)[/dim]",
-            )
-            valid_count += 1
-        else:
-            console.print(f"[red]✗[/red] {audio_file.name}: {info.error}")
-            invalid_files.append((audio_file.name, info.error or "Unknown error"))
-
-    console.print(f"\n[bold]Results:[/bold] {valid_count} valid, {len(invalid_files)} invalid")
-
-    if invalid_files:
-        console.print("\n[yellow]Invalid files:[/yellow]")
-        for name, error in invalid_files:
-            console.print(f"  • {name}: [dim]{error}[/dim]")
-
-
-@cli.command()
 @click.argument("query", required=False)
 def search(query: str | None) -> None:
     """Search for sounds by name with fuzzy matching.
@@ -1041,9 +970,10 @@ def volume(level: float | None) -> None:
         console.print(f"[cyan]Current volume:[/cyan] {percentage}%")
     else:
         audio_manager.set_volume(level)
-        config = Config()
-        config.volume = audio_manager.volume
-        config.save()
+        pm = ProfileManager()
+        profile = pm.get_active_profile()
+        profile.volume = audio_manager.volume
+        pm.save_profile(profile)
         console.print("[green]✓[/green] Volume saved!")
 
 
@@ -1895,65 +1825,6 @@ def cache_set_size(size_mb: int) -> None:
     _, audio_manager = get_soundboard()
     audio_manager.set_cache_size(size_mb)
     console.print(f"[green]✓[/green] Cache size set to {size_mb} MB")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Memory Management Commands
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-@cli.group()
-def memory() -> None:
-    """Monitor and manage memory usage.
-
-    Tools for tracking memory consumption and optimizing resource usage.
-    """
-
-
-@memory.command(name="stats")
-def memory_stats() -> None:
-    """Show memory usage statistics.
-
-    Displays information about memory consumption by the soundboard.
-    """
-    _, audio_manager = get_soundboard()
-    monitor = MemoryMonitor(audio_manager)
-    stats = monitor.get_stats()
-
-    table = Table(title="Memory Statistics", show_header=True, header_style="bold cyan")
-    table.add_column("Metric", style="white")
-    table.add_column("Value", style="cyan", justify="right")
-
-    table.add_row("Cache Memory", f"{stats.cache_mb:.1f} MB")
-    table.add_row("NumPy Arrays", str(stats.numpy_arrays))
-    table.add_row("Estimated NumPy Memory", f"{stats.estimated_numpy_mb:.1f} MB")
-    table.add_row("Total Objects", str(stats.total_objects))
-
-    console.print(table)
-
-
-@memory.command(name="cleanup")
-@click.option("--aggressive", "-a", is_flag=True, help="Also clear the cache")
-def memory_cleanup(aggressive: bool) -> None:
-    """Clean up unused memory.
-
-    Forces garbage collection to free unused memory.
-
-    Examples:
-        muc memory cleanup              # Normal cleanup
-        muc memory cleanup --aggressive # Also clear cache
-
-    """
-    _, audio_manager = get_soundboard()
-    monitor = MemoryMonitor(audio_manager)
-
-    if aggressive:
-        console.print("[cyan]Performing aggressive cleanup (clearing cache)...[/cyan]")
-    else:
-        console.print("[cyan]Performing memory cleanup...[/cyan]")
-
-    collected = monitor.cleanup(aggressive=aggressive)
-    console.print(f"[green]✓[/green] Freed {collected} objects")
 
 
 def main() -> None:

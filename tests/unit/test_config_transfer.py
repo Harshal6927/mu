@@ -272,24 +272,6 @@ class TestConfigTransfer:
         # Only newly imported profiles should be in the list
         assert len([p for p in imported if p == "existing"]) == 0
 
-    def test_export_to_clipboard(self, transfer: ConfigTransfer) -> None:
-        """Test exporting profile to clipboard-ready string."""
-        json_str = transfer.export_to_clipboard("default")
-
-        data = json.loads(json_str)
-        assert "_export_version" in data
-        assert "profile" in data
-        assert data["profile"]["name"] == "default"
-
-    def test_import_from_string(self, transfer: ConfigTransfer, manager: ProfileManager) -> None:
-        """Test importing profile from JSON string."""
-        json_str = transfer.export_to_clipboard("default")
-
-        profile = transfer.import_from_string(json_str, new_name="from_string")
-
-        assert profile.name == "from_string"
-        assert manager.get_profile("from_string") is not None
-
     def test_version_check_on_import(self, transfer: ConfigTransfer, temp_output_dir: Path) -> None:
         """Test that future export versions raise ValueError."""
         export_data = {

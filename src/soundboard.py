@@ -8,13 +8,13 @@ from pynput import keyboard
 from rich.console import Console
 from rich.table import Table
 
-from .audio_manager import AudioManager
-from .config import Config
-from .hotkey_manager import HotkeyManager
-from .logging_config import get_logger
-from .metadata import MetadataManager
-from .sounds_directories import SoundsDirectoryManager
-from .validators import SUPPORTED_FORMATS, validate_audio_file_safe
+from src.audio_manager import AudioManager
+from src.hotkey_manager import HotkeyManager
+from src.logging_config import get_logger
+from src.metadata import MetadataManager
+from src.profile_manager import ProfileManager
+from src.sounds_directories import SoundsDirectoryManager
+from src.validators import SUPPORTED_FORMATS, validate_audio_file_safe
 
 logger = get_logger(__name__)
 
@@ -152,11 +152,12 @@ class Soundboard:
         """Set up hotkeys based on configuration mode.
 
         Args:
-            mode: Hotkey mode ("default", "custom", "merged"). Uses config if None.
+            mode: Hotkey mode ("default", "custom", "merged"). Uses profile if None.
 
         """
-        config = Config()
-        mode = mode or config.hotkey_mode
+        pm = ProfileManager()
+        profile = pm.get_active_profile()
+        mode = mode or profile.hotkey_mode
 
         if mode == "default":
             self.setup_default_hotkeys()

@@ -4,14 +4,12 @@
 import random
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 
 from src.cache import CachedAudio, LRUAudioCache
-from src.config import Config
-from src.lazy_loader import LazySound, LazySoundLibrary
 
 
 class TestStartupPerformance:
@@ -28,53 +26,6 @@ class TestStartupPerformance:
         for i in range(100):
             (tmp_path / f"sound_{i:03d}.wav").touch()
         return tmp_path
-
-    def test_lazy_library_startup_time(self, large_sound_library: Path) -> None:
-        """Startup should be under 500ms with 100 sounds.
-
-        Target: <500ms for initial library creation.
-        """
-        start = time.perf_counter()
-        _library = LazySoundLibrary(sounds_dir=large_sound_library)
-        elapsed = time.perf_counter() - start
-
-        # Just creating library should be fast (no scanning yet)
-        assert elapsed < 0.1, f"Library creation took {elapsed * 1000:.1f}ms"
-
-    def test_lazy_index_build_time(self, large_sound_library: Path) -> None:
-        """Index building should be under 500ms with 100 sounds.
-
-        Target: <500ms for building the sound index.
-        """
-        library = LazySoundLibrary(sounds_dir=large_sound_library)
-
-        start = time.perf_counter()
-        _ = library.sounds  # Triggers index build
-        elapsed = time.perf_counter() - start
-
-        assert elapsed < 0.5, f"Index build took {elapsed * 1000:.1f}ms (target: <500ms)"
-
-    def test_metadata_load_time_single(self, tmp_path: Path) -> None:
-        """Metadata loading should be reasonably fast."""
-        test_file = tmp_path / "test.wav"
-        test_file.touch()
-
-        sound = LazySound(test_file)
-
-        mock_info = MagicMock()
-        mock_info.duration = 5.0
-        mock_info.samplerate = 44100
-        mock_info.channels = 2
-        mock_info.format = "WAV"
-        mock_info.subtype = "PCM_16"
-
-        with patch("src.lazy_loader.sf.info", return_value=mock_info):
-            start = time.perf_counter()
-            _ = sound.metadata
-            elapsed = time.perf_counter() - start
-
-            # Should be very fast since it's mocked
-            assert elapsed < 0.01
 
 
 class TestCachePerformance:
@@ -243,25 +194,3 @@ class TestPreloadPerformance:
             assert loaded == 10
             # Should be reasonably fast even with mocking overhead
             assert elapsed < 1.0, f"Preload took {elapsed:.2f}s"
-
-
-class TestAsyncConfigPerformance:
-    """Benchmark tests for async configuration."""
-
-    def test_async_save_non_blocking(self, tmp_path: Path) -> None:
-        """Async save should return immediately."""
-        with patch.object(Config, "load"):
-            config = Config()
-            config.config_file = tmp_path / "test_config.json"
-
-            with patch("builtins.open", MagicMock()):
-                start = time.perf_counter()
-                config.save(blocking=False)
-                elapsed = time.perf_counter() - start
-
-                # Non-blocking save should return almost immediately
-                assert elapsed < 0.01, f"Async save took {elapsed * 1000:.1f}ms"
-
-                # Cancel the timer to avoid test pollution
-                if config._auto_save_timer:
-                    config._auto_save_timer.cancel()

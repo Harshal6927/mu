@@ -5,7 +5,7 @@
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -22,20 +22,21 @@ def temp_config_dir() -> Generator[Path]:
 
 
 @pytest.fixture
-def mock_config(temp_config_dir: Path) -> MagicMock:
-    """Create a mock Config instance."""
-    mock = MagicMock()
-    mock.config_file = temp_config_dir / "config.json"
-    mock.hotkeys = {}
-    mock.hotkey_mode = "merged"
-    return mock
+def mock_profile_manager(temp_config_dir: Path) -> MagicMock:
+    """Create a mock ProfileManager instance."""
+    mock_profile = MagicMock()
+    mock_profile.hotkeys = {}
+    mock_profile.hotkey_mode = "merged"
+
+    mock_pm = MagicMock()
+    mock_pm.get_active_profile.return_value = mock_profile
+    return mock_pm
 
 
 @pytest.fixture
-def hotkey_manager(mock_config: MagicMock) -> HotkeyManager:
-    """Create a HotkeyManager with a mock config."""
-    with patch("src.hotkey_manager.Config", return_value=mock_config):
-        return HotkeyManager(config=mock_config)
+def hotkey_manager(mock_profile_manager: MagicMock) -> HotkeyManager:
+    """Create a HotkeyManager with a mock profile manager."""
+    return HotkeyManager(profile_manager=mock_profile_manager)
 
 
 class TestHotkeyNormalization:
@@ -88,17 +89,17 @@ class TestHotkeyNormalization:
 class TestHotkeyBinding:
     """Tests for hotkey binding operations."""
 
-    def test_bind_hotkey(self, hotkey_manager: HotkeyManager, mock_config: MagicMock) -> None:
+    def test_bind_hotkey(self, hotkey_manager: HotkeyManager, mock_profile_manager: MagicMock) -> None:
         """Test binding a hotkey to a sound."""
         result = hotkey_manager.bind("f1", "airhorn")
         assert result is True
         assert hotkey_manager.bindings["<f1>"] == "airhorn"
-        mock_config.save.assert_called()
+        mock_profile_manager.save_profile.assert_called()
 
     def test_bind_normalizes_hotkey(
         self,
         hotkey_manager: HotkeyManager,
-        mock_config: MagicMock,  # noqa: ARG002
+        mock_profile_manager: MagicMock,  # noqa: ARG002
     ) -> None:
         """Test binding normalizes the hotkey string."""
         hotkey_manager.bind("ctrl+a", "applause")
@@ -107,7 +108,7 @@ class TestHotkeyBinding:
     def test_unbind_hotkey(
         self,
         hotkey_manager: HotkeyManager,
-        mock_config: MagicMock,  # noqa: ARG002
+        mock_profile_manager: MagicMock,  # noqa: ARG002
     ) -> None:
         """Test unbinding a hotkey."""
         hotkey_manager.bind("f1", "airhorn")
@@ -123,7 +124,7 @@ class TestHotkeyBinding:
     def test_unbind_sound(
         self,
         hotkey_manager: HotkeyManager,
-        mock_config: MagicMock,  # noqa: ARG002
+        mock_profile_manager: MagicMock,  # noqa: ARG002
     ) -> None:
         """Test unbinding all hotkeys for a sound."""
         hotkey_manager.bind("f1", "airhorn")
@@ -152,7 +153,7 @@ class TestHotkeyBinding:
         assert bindings["<f1>"] == "airhorn"
         assert bindings["<f2>"] == "rickroll"
 
-    def test_clear_all(self, hotkey_manager: HotkeyManager, mock_config: MagicMock) -> None:
+    def test_clear_all(self, hotkey_manager: HotkeyManager, mock_profile_manager: MagicMock) -> None:
         """Test clearing all bindings."""
         hotkey_manager.bind("f1", "airhorn")
         hotkey_manager.bind("f2", "rickroll")
@@ -160,7 +161,7 @@ class TestHotkeyBinding:
         count = hotkey_manager.clear_all()
         assert count == 2
         assert hotkey_manager.bindings == {}
-        mock_config.save.assert_called()
+        mock_profile_manager.save_profile.assert_called()
 
     def test_get_hotkeys_for_sound(self, hotkey_manager: HotkeyManager) -> None:
         """Test getting all hotkeys bound to a sound."""
@@ -183,23 +184,27 @@ class TestHotkeyBinding:
 class TestHotkeyManagerPersistence:
     """Tests for hotkey persistence."""
 
-    def test_load_bindings_from_config(self, mock_config: MagicMock) -> None:
-        """Test loading bindings from config on init."""
-        mock_config.hotkeys = {"<f1>": "airhorn", "<f2>": "rickroll"}
+    def test_load_bindings_from_profile(self) -> None:
+        """Test loading bindings from profile on init."""
+        mock_profile = MagicMock()
+        mock_profile.hotkeys = {"<f1>": "airhorn", "<f2>": "rickroll"}
 
-        with patch("src.hotkey_manager.Config", return_value=mock_config):
-            manager = HotkeyManager(config=mock_config)
+        mock_pm = MagicMock()
+        mock_pm.get_active_profile.return_value = mock_profile
+
+        manager = HotkeyManager(profile_manager=mock_pm)
 
         assert manager.bindings == {"<f1>": "airhorn", "<f2>": "rickroll"}
 
-    def test_save_bindings_to_config(
+    def test_save_bindings_to_profile(
         self,
         hotkey_manager: HotkeyManager,
-        mock_config: MagicMock,
+        mock_profile_manager: MagicMock,
     ) -> None:
-        """Test bindings are saved to config."""
+        """Test bindings are saved to profile."""
+        mock_profile = mock_profile_manager.get_active_profile.return_value
         hotkey_manager.bind("f1", "airhorn")
 
-        # Check that config.hotkeys was updated
-        assert mock_config.hotkeys == {"<f1>": "airhorn"}
-        mock_config.save.assert_called()
+        # Check that profile.hotkeys was updated
+        assert mock_profile.hotkeys == {"<f1>": "airhorn"}
+        mock_profile_manager.save_profile.assert_called()
